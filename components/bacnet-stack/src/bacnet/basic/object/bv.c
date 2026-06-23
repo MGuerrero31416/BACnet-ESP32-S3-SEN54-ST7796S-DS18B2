@@ -49,6 +49,8 @@ struct object_data {
     const char *Active_Text;
     const char *Inactive_Text;
     const char *Description;
+    char Object_Name_Buffer[65];
+    char Description_Buffer[129];
     void *Context;
 #if defined(INTRINSIC_REPORTING) && (BINARY_VALUE_INTRINSIC_REPORTING)
     uint32_t Time_Delay;
@@ -1191,15 +1193,16 @@ bool Binary_Value_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
             status = write_property_type_valid(
                 wp_data, &value, BACNET_APPLICATION_TAG_CHARACTER_STRING);
             if (status) {
-                static char name_bufs[256][65];  /* Support up to 256 instances */
                 uint16_t len = value.type.Character_String.length;
-                uint8_t idx = wp_data->object_instance & 0xFF;
-                memset(name_bufs[idx], 0, sizeof(name_bufs[idx]));
-                if (len > 0 && len < sizeof(name_bufs[idx])) {
-                    memcpy(name_bufs[idx], value.type.Character_String.value, len);
-                    name_bufs[idx][len] = 0;
+                memset(pObject->Object_Name_Buffer, 0,
+                    sizeof(pObject->Object_Name_Buffer));
+                if (len > 0 && len < sizeof(pObject->Object_Name_Buffer)) {
+                    memcpy(pObject->Object_Name_Buffer,
+                        value.type.Character_String.value, len);
+                    pObject->Object_Name_Buffer[len] = 0;
                 }
-                Binary_Value_Name_Set(wp_data->object_instance, name_bufs[idx]);
+                Binary_Value_Name_Set(
+                    wp_data->object_instance, pObject->Object_Name_Buffer);
                 bacnet_nvs_save_bv_name(wp_data->object_instance,
                     (const char *)value.type.Character_String.value,
                     value.type.Character_String.length);
@@ -1210,15 +1213,16 @@ bool Binary_Value_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
             status = write_property_type_valid(
                 wp_data, &value, BACNET_APPLICATION_TAG_CHARACTER_STRING);
             if (status) {
-                static char desc_bufs[256][129];  /* Support up to 256 instances */
                 uint16_t len = value.type.Character_String.length;
-                uint8_t idx = wp_data->object_instance & 0xFF;
-                memset(desc_bufs[idx], 0, sizeof(desc_bufs[idx]));
-                if (len > 0 && len < sizeof(desc_bufs[idx])) {
-                    memcpy(desc_bufs[idx], value.type.Character_String.value, len);
-                    desc_bufs[idx][len] = 0;
+                memset(pObject->Description_Buffer, 0,
+                    sizeof(pObject->Description_Buffer));
+                if (len > 0 && len < sizeof(pObject->Description_Buffer)) {
+                    memcpy(pObject->Description_Buffer,
+                        value.type.Character_String.value, len);
+                    pObject->Description_Buffer[len] = 0;
                 }
-                Binary_Value_Description_Set(wp_data->object_instance, desc_bufs[idx]);
+                Binary_Value_Description_Set(
+                    wp_data->object_instance, pObject->Description_Buffer);
                 bacnet_nvs_save_bv_desc(wp_data->object_instance,
                     (const char *)value.type.Character_String.value,
                     value.type.Character_String.length);

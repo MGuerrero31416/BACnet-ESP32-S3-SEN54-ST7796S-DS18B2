@@ -35,6 +35,8 @@ typedef struct analog_value_descr {
     bool Changed;
     const char *Object_Name;
     const char *Description;
+    char Object_Name_Buffer[65];
+    char Description_Buffer[129];
     BACNET_RELIABILITY Reliability;
     void *Context;
 #if defined(INTRINSIC_REPORTING)

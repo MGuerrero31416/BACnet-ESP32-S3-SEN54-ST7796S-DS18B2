@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -58,13 +59,194 @@ static void bacnet_receive_task(void *pvParameters);
 static void bacnet_mstp_receive_task(void *pvParameters);
 static void bacnet_cov_task(void *pvParameters);
 static void sen54_task(void *pvParameters);
+static void profiled_handler_read_property(uint8_t *service_request,
+    uint16_t service_len,
+    BACNET_ADDRESS *src,
+    BACNET_CONFIRMED_SERVICE_DATA *service_data);
+static void profiled_handler_write_property(uint8_t *service_request,
+    uint16_t service_len,
+    BACNET_ADDRESS *src,
+    BACNET_CONFIRMED_SERVICE_DATA *service_data);
+
+typedef enum {
+    STACK_EVT_NORMAL = 0,
+    STACK_EVT_BACNET_IP_RX,
+    STACK_EVT_MSTP_RX,
+    STACK_EVT_READ_PROPERTY,
+    STACK_EVT_WRITE_PROPERTY,
+    STACK_EVT_COV_NOTIFICATION,
+    STACK_EVT_DISPLAY_UPDATE,
+    STACK_EVT_SEN54_READ,
+    STACK_EVT_COUNT
+} stack_profile_event_t;
+
+typedef struct {
+    const char *task_name;
+    TaskHandle_t *task_handle;
+    uint32_t configured_stack_words;
+    UBaseType_t last_hwm_words;
+    UBaseType_t min_free_words_observed;
+    UBaseType_t min_free_words_by_event[STACK_EVT_COUNT];
+} stack_profile_task_t;
+
+static TaskHandle_t bacnet_rx_task_handle = NULL;
+static TaskHandle_t bacnet_mstp_rx_task_handle = NULL;
 static TaskHandle_t bacnet_cov_task_handle = NULL;
+static TaskHandle_t sen54_task_handle = NULL;
 static SemaphoreHandle_t bacnet_datalink_mutex = NULL;
 static volatile uint32_t mstp_pdu_count = 0;
 static volatile uint32_t mstp_apdu_count = 0;
 static volatile uint32_t mstp_rp_total = 0;
 static volatile uint32_t mstp_wp_total = 0;
 static float mstp_rp_last_value = 0.0f;
+
+static stack_profile_task_t stack_profile_tasks[] = {
+    {
+        .task_name = "bacnet_rx",
+        .task_handle = &bacnet_rx_task_handle,
+        .configured_stack_words = 16384,
+    },
+    {
+        .task_name = "bacnet_mstp_rx",
+        .task_handle = &bacnet_mstp_rx_task_handle,
+        .configured_stack_words = 12288,
+    },
+    {
+        .task_name = "bacnet_cov",
+        .task_handle = &bacnet_cov_task_handle,
+        .configured_stack_words = 24576,
+    },
+    {
+        .task_name = "sen54",
+        .task_handle = &sen54_task_handle,
+        .configured_stack_words = 4096,
+    },
+};
+
+#define STACK_PROFILE_TASK_COUNT \
+    ((int)(sizeof(stack_profile_tasks) / sizeof(stack_profile_tasks[0])))
+
+static const char *stack_profile_event_name(stack_profile_event_t event)
+{
+    switch (event) {
+        case STACK_EVT_NORMAL:
+            return "normal";
+        case STACK_EVT_BACNET_IP_RX:
+            return "bacnet_ip_rx";
+        case STACK_EVT_MSTP_RX:
+            return "mstp_rx";
+        case STACK_EVT_READ_PROPERTY:
+            return "read_property";
+        case STACK_EVT_WRITE_PROPERTY:
+            return "write_property";
+        case STACK_EVT_COV_NOTIFICATION:
+            return "cov_notification";
+        case STACK_EVT_DISPLAY_UPDATE:
+            return "display_update";
+        case STACK_EVT_SEN54_READ:
+            return "sen54_read";
+        default:
+            return "unknown";
+    }
+}
+
+static void stack_profile_init(void)
+{
+    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
+        stack_profile_tasks[i].last_hwm_words = 0;
+        stack_profile_tasks[i].min_free_words_observed = UINT_MAX;
+        for (int e = 0; e < STACK_EVT_COUNT; e++) {
+            stack_profile_tasks[i].min_free_words_by_event[e] = UINT_MAX;
+        }
+    }
+}
+
+static void stack_profile_sample(stack_profile_event_t event)
+{
+    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
+        TaskHandle_t handle = *stack_profile_tasks[i].task_handle;
+        if (!handle) {
+            continue;
+        }
+
+        UBaseType_t hwm = uxTaskGetStackHighWaterMark(handle);
+        stack_profile_tasks[i].last_hwm_words = hwm;
+        if (hwm < stack_profile_tasks[i].min_free_words_observed) {
+            stack_profile_tasks[i].min_free_words_observed = hwm;
+        }
+        if (event >= 0 && event < STACK_EVT_COUNT &&
+            hwm < stack_profile_tasks[i].min_free_words_by_event[event]) {
+            stack_profile_tasks[i].min_free_words_by_event[event] = hwm;
+        }
+    }
+}
+
+static float stack_profile_used_percent(uint32_t configured_words, UBaseType_t min_free_words)
+{
+    if (configured_words == 0) {
+        return 0.0f;
+    }
+
+    uint32_t used_words = configured_words;
+    if (min_free_words < configured_words) {
+        used_words = configured_words - (uint32_t)min_free_words;
+    }
+
+    return (100.0f * (float)used_words) / (float)configured_words;
+}
+
+static void stack_profile_log_report(void)
+{
+    ESP_LOGI(TAG, "==== STACK PROFILE REPORT ====");
+    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
+        stack_profile_task_t *entry = &stack_profile_tasks[i];
+        TaskHandle_t handle = *entry->task_handle;
+        if (!handle) {
+            ESP_LOGW(TAG, "stack task=%s not running", entry->task_name);
+            continue;
+        }
+
+        UBaseType_t hwm_now = uxTaskGetStackHighWaterMark(handle);
+        if (hwm_now < entry->min_free_words_observed) {
+            entry->min_free_words_observed = hwm_now;
+        }
+
+        float used_pct = stack_profile_used_percent(
+            entry->configured_stack_words,
+            entry->min_free_words_observed);
+        uint32_t min_free_bytes = (uint32_t)entry->min_free_words_observed * sizeof(StackType_t);
+
+        ESP_LOGI(TAG,
+            "stack task=%s configured=%lu words (%lu bytes) hwm_now=%lu words (%lu bytes) min_free_observed=%lu words (%lu bytes) used=%.1f%%",
+            entry->task_name,
+            (unsigned long)entry->configured_stack_words,
+            (unsigned long)(entry->configured_stack_words * sizeof(StackType_t)),
+            (unsigned long)hwm_now,
+            (unsigned long)(hwm_now * sizeof(StackType_t)),
+            (unsigned long)entry->min_free_words_observed,
+            (unsigned long)min_free_bytes,
+            used_pct);
+    }
+
+    for (int e = 0; e < STACK_EVT_COUNT; e++) {
+        stack_profile_event_t event = (stack_profile_event_t)e;
+        for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
+            stack_profile_task_t *entry = &stack_profile_tasks[i];
+            UBaseType_t min_event = entry->min_free_words_by_event[e];
+            if (min_event == UINT_MAX) {
+                continue;
+            }
+            float used_pct = stack_profile_used_percent(entry->configured_stack_words, min_event);
+            ESP_LOGI(TAG,
+                "stack_event event=%s task=%s min_free=%lu words (%lu bytes) used=%.1f%%",
+                stack_profile_event_name(event),
+                entry->task_name,
+                (unsigned long)min_event,
+                (unsigned long)(min_event * sizeof(StackType_t)),
+                used_pct);
+        }
+    }
+}
 
 static bool wifi_connected_now(void)
 {
@@ -168,6 +350,7 @@ static void bacnet_receive_task(void *pvParameters)
         memset(&src, 0, sizeof(src));
         pdu_len = bip_receive(&src, rx_buffer, sizeof(rx_buffer), 100);
         if (pdu_len > 0) {
+            stack_profile_sample(STACK_EVT_BACNET_IP_RX);
             /* Save original source from UDP socket before NPDU decode modifies it */
             BACNET_ADDRESS orig_src = src;
             BACNET_ADDRESS dest = {0};
@@ -183,6 +366,7 @@ static void bacnet_receive_task(void *pvParameters)
                 bacnet_datalink_lock(datalink_bip);
                 apdu_handler(&src, &rx_buffer[apdu_offset], pdu_len - apdu_offset);
                 bacnet_datalink_unlock();
+                stack_profile_sample(STACK_EVT_BACNET_IP_RX);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -203,6 +387,7 @@ static void bacnet_mstp_receive_task(void *pvParameters)
         memset(&src, 0, sizeof(src));
         pdu_len = dlmstp_receive(&src, rx_buffer, sizeof(rx_buffer), 0);
         if (pdu_len > 0) {
+            stack_profile_sample(STACK_EVT_MSTP_RX);
             mstp_pdu_count++;
             BACNET_ADDRESS dest = {0};
             BACNET_NPDU_DATA npdu_data = {0};
@@ -226,6 +411,7 @@ static void bacnet_mstp_receive_task(void *pvParameters)
                 bacnet_datalink_lock(datalink_mstp);
                 apdu_handler(&src, &rx_buffer[apdu_offset], pdu_len - apdu_offset);
                 bacnet_datalink_unlock();
+                stack_profile_sample(STACK_EVT_MSTP_RX);
             } else {
                 ESP_LOGW(TAG, "MS/TP RX frame decode failed: len=%u apdu_offset=%d src.len=%u src.mac=%u",
                     (unsigned)pdu_len, apdu_offset, (unsigned)src.len,
@@ -245,6 +431,8 @@ void app_main(void)
     if (!bacnet_datalink_mutex) {
         ESP_LOGE(TAG, "Failed to create BACnet datalink mutex");
     }
+
+    stack_profile_init();
     
     /* If OVERRIDE_NVS_ON_FLASH is set, always erase NVS to reset to code defaults */
     override_nvs_on_flash = USER_OVERRIDE_NVS_ON_FLASH;
@@ -314,9 +502,9 @@ void app_main(void)
     apdu_set_unconfirmed_handler(SERVICE_UNCONFIRMED_WHO_IS, handler_who_is);
     apdu_set_unrecognized_service_handler_handler(handler_unrecognized_service);
     /* Read Property - REQUIRED for BACnet devices */
-    apdu_set_confirmed_handler(SERVICE_CONFIRMED_READ_PROPERTY, handler_read_property);
+    apdu_set_confirmed_handler(SERVICE_CONFIRMED_READ_PROPERTY, profiled_handler_read_property);
     apdu_set_confirmed_handler(SERVICE_CONFIRMED_READ_PROP_MULTIPLE, handler_read_property_multiple);
-    apdu_set_confirmed_handler(SERVICE_CONFIRMED_WRITE_PROPERTY, handler_write_property);
+    apdu_set_confirmed_handler(SERVICE_CONFIRMED_WRITE_PROPERTY, profiled_handler_write_property);
     apdu_set_confirmed_handler(SERVICE_CONFIRMED_SUBSCRIBE_COV, handler_cov_subscribe);
     apdu_set_confirmed_handler(SERVICE_CONFIRMED_SUBSCRIBE_COV_PROPERTY, handler_cov_subscribe_property);
 
@@ -348,20 +536,23 @@ void app_main(void)
 
     /* Start BACnet receive task to handle incoming messages */
     if (USER_ENABLE_BACNET_IP) {
-        if (xTaskCreate(bacnet_receive_task, "bacnet_rx", 16384, NULL, 5, NULL) != pdPASS) {
+        if (xTaskCreate(bacnet_receive_task, "bacnet_rx", 16384, NULL, 5, &bacnet_rx_task_handle) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create bacnet_rx task");
+            bacnet_rx_task_handle = NULL;
         }
     }
     if (USER_ENABLE_BACNET_MSTP) {
-        if (xTaskCreate(bacnet_mstp_receive_task, "bacnet_mstp_rx", 12288, NULL, 5, NULL) != pdPASS) {
+        if (xTaskCreate(bacnet_mstp_receive_task, "bacnet_mstp_rx", 12288, NULL, 5, &bacnet_mstp_rx_task_handle) != pdPASS) {
             ESP_LOGE(TAG, "Failed to create bacnet_mstp_rx task");
+            bacnet_mstp_rx_task_handle = NULL;
         }
     }
     if (xTaskCreate(bacnet_cov_task, "bacnet_cov", 24576, NULL, 4, &bacnet_cov_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create bacnet_cov task");
     }
-    if (xTaskCreate(sen54_task, "sen54", 4096, NULL, 3, NULL) != pdPASS) {
+    if (xTaskCreate(sen54_task, "sen54", 4096, NULL, 3, &sen54_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sen54 task");
+        sen54_task_handle = NULL;
     }
 
     if (USER_ENABLE_BACNET_MSTP) {
@@ -374,6 +565,7 @@ void app_main(void)
     uint32_t mstp_rx_tick = 0;
     uint32_t mstp_last_seen_pdu = 0;
     uint8_t mstp_alive_ticks = 0;
+    uint32_t stack_report_tick = 0;
     while (1) {
         if (USER_ENABLE_BACNET_IP) {
             bacnet_datalink_lock(datalink_bip);
@@ -396,6 +588,8 @@ void app_main(void)
             mstp_wp_total = 0;
         }
 
+        stack_profile_sample(STACK_EVT_NORMAL);
+
         if (USER_ENABLE_BACNET_MSTP) {
             if (mstp_pdu_count != mstp_last_seen_pdu) {
                 mstp_last_seen_pdu = mstp_pdu_count;
@@ -417,7 +611,13 @@ void app_main(void)
             float av2 = Analog_Value_Present_Value(2);
             float av3 = Analog_Value_Present_Value(3);
             float av4 = Analog_Value_Present_Value(4);
+            stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
             display_update_values(av1, av2, av3, av4);
+            stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
+        }
+
+        if (++stack_report_tick % 30 == 0) {
+            stack_profile_log_report();
         }
         
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -441,7 +641,9 @@ static void bacnet_cov_task(void *pvParameters)
         if (active_datalink) {
             bacnet_datalink_lock(active_datalink);
             handler_cov_timer_seconds(1);
+            stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
             handler_cov_task();
+            stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
             bacnet_datalink_unlock();
         } else {
             handler_cov_timer_seconds(1);
@@ -479,6 +681,7 @@ static void sen54_task(void *pvParameters)
             continue;
         }
 
+        stack_profile_sample(STACK_EVT_SEN54_READ);
         if (sen54_read(&sensor_data)) {
             Analog_Value_Present_Value_Set(1, sensor_data.pm2_5,       16);
             Analog_Value_Present_Value_Set(2, sensor_data.temperature, 16);
@@ -487,6 +690,7 @@ static void sen54_task(void *pvParameters)
             Analog_Value_Present_Value_Set(5, sensor_data.pm1_0,       16);
             Analog_Value_Present_Value_Set(6, sensor_data.pm4_0,       16);
             Analog_Value_Present_Value_Set(7, sensor_data.pm10,        16);
+            stack_profile_sample(STACK_EVT_SEN54_READ);
         } else {
             /* -1 signals no valid data to BACnet clients */
             Analog_Value_Present_Value_Set(1, -1.0f, 16);
@@ -496,6 +700,7 @@ static void sen54_task(void *pvParameters)
             Analog_Value_Present_Value_Set(5, -1.0f, 16);
             Analog_Value_Present_Value_Set(6, -1.0f, 16);
             Analog_Value_Present_Value_Set(7, -1.0f, 16);
+            stack_profile_sample(STACK_EVT_SEN54_READ);
         }
 
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -509,4 +714,26 @@ static void bacnet_register_with_bbmd(void)
                                     USER_BBMD_PORT };
     int result = bvlc_register_with_bbmd(&bbmd_addr, USER_BBMD_TTL_SECONDS);
     ESP_LOGI(TAG, "BBMD register result: %d", result);
+}
+
+static void profiled_handler_read_property(
+    uint8_t *service_request,
+    uint16_t service_len,
+    BACNET_ADDRESS *src,
+    BACNET_CONFIRMED_SERVICE_DATA *service_data)
+{
+    stack_profile_sample(STACK_EVT_READ_PROPERTY);
+    handler_read_property(service_request, service_len, src, service_data);
+    stack_profile_sample(STACK_EVT_READ_PROPERTY);
+}
+
+static void profiled_handler_write_property(
+    uint8_t *service_request,
+    uint16_t service_len,
+    BACNET_ADDRESS *src,
+    BACNET_CONFIRMED_SERVICE_DATA *service_data)
+{
+    stack_profile_sample(STACK_EVT_WRITE_PROPERTY);
+    handler_write_property(service_request, service_len, src, service_data);
+    stack_profile_sample(STACK_EVT_WRITE_PROPERTY);
 }
