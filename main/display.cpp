@@ -390,7 +390,11 @@ extern "C" void display_set_link_status(bool wifi_connected, bool mstp_connected
     draw_link_indicators(false);
 }
 
-extern "C" void display_update_values(float av1, float av2, float av3, float av4) { 
+extern "C" void display_update_values(
+                                        float pm25,
+                                        float temperature,
+                                        float humidity,
+                                        float voc) { 
     // Refresh header IP occasionally and only if it changed to avoid flicker.
     s_header_refresh_tick++;
     if ((s_header_refresh_tick % 5U) == 0U) {
@@ -400,6 +404,6 @@ extern "C" void display_update_values(float av1, float av2, float av3, float av4
 
     // draw_mid_panels / draw_aqi_panels delegate change-detection to
     // draw_aqi_panel, which returns immediately if nothing has changed.
-    draw_mid_panels(av2, av3);
-    draw_aqi_panels(av1, av4);
+    draw_mid_panels(temperature, humidity);
+    draw_aqi_panels(pm25, voc);
 }
