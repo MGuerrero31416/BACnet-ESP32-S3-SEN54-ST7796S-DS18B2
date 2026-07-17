@@ -6,15 +6,15 @@
 #include "User_Private_Settings.h"
 
 const bool USER_ENABLE_BACNET_IP = true;
-const bool USER_WIFI_USE_STATIC_IP = true;
-const char USER_WIFI_STATIC_IP_ADDR[] = "10.120.245.96";
-const char USER_WIFI_STATIC_IP_GATEWAY[] = "10.210.245.254";
+const bool USER_WIFI_USE_STATIC_IP = false;
+const char USER_WIFI_STATIC_IP_ADDR[] = "10.120.245.97";
+const char USER_WIFI_STATIC_IP_GATEWAY[] = "10.120.245.254";
 const char USER_WIFI_STATIC_IP_NETMASK[] = "255.255.255.0";
 
 /* BACnet device settings */
-const char USER_BACNET_DEVICE_NAME[] = "ESP32-S3 (55501)";
-const uint32_t USER_BACNET_DEVICE_INSTANCE = 55501;
-const int USER_OVERRIDE_NVS_ON_FLASH = 1;
+const char USER_BACNET_DEVICE_NAME[] = "ESP32-S3_55502";
+const uint32_t USER_BACNET_DEVICE_INSTANCE = 55502;
+const int USER_OVERRIDE_NVS_ON_FLASH = 0;
 
 /* BBMD foreign device registration */
 const uint8_t USER_BBMD_IP_OCTET_1 = 192;
@@ -25,42 +25,79 @@ const uint16_t USER_BBMD_PORT = 0xBAC0;
 const uint16_t USER_BBMD_TTL_SECONDS = 600;
 
 /* BACnet MS/TP settings */
-const bool USER_ENABLE_BACNET_MSTP = true;
+const bool USER_ENABLE_BACNET_MSTP = false;
 const uint8_t USER_MSTP_MAC_ADDRESS = 21;
 const uint8_t USER_MSTP_MAX_INFO_FRAMES = 80;
 const uint8_t USER_MSTP_MAX_MASTER = 127;
 const uint32_t USER_MSTP_BAUD_RATE = 38400U;
 
 /* BACnet object defaults */
-const uint32_t USER_AV_INSTANCES[USER_AV_COUNT] = { 1, 2, 3, 4, 5, 6, 7 };
+const uint32_t USER_AV_INSTANCES[USER_AV_COUNT] = {
+    1, 2, 3, 4, 5, 6, 7, 8,
+    9, 10, 11, 12, 13, 14, 15, 16
+};
 const char *USER_AV_NAMES[USER_AV_COUNT] = {
-    "PM2.5",
-    "Temp",
-    "% RH",
-    "VOC Index",
-    "PM1.0",
-    "PM4",
-    "PM10"
+    "AV1",
+    "AV2",
+    "AV3",
+    "AV4",
+    "AV5",
+    "AV6",
+    "AV7",
+    "AV8",
+    "AV9",
+    "AV10",
+    "AV11",
+    "AV12",
+    "AV13",
+    "AV14",
+    "AV15",
+    "AV16"
 };
 const char *USER_AV_DESCRIPTIONS[USER_AV_COUNT] = {
-    "PM2.5",
-    "Temperature",
-    "Humidity",
-    "VOC Index",
-    "PM1.0",
-    "PM4.0",
-    "PM10"
+    "Analog Value 1",
+    "Analog Value 2",
+    "Analog Value 3",
+    "Analog Value 4",
+    "Analog Value 5",
+    "Analog Value 6",
+    "Analog Value 7",
+    "Analog Value 8",
+    "Analog Value 9",
+    "Analog Value 10",
+    "Analog Value 11",
+    "Analog Value 12",
+    "Analog Value 13",
+    "Analog Value 14",
+    "Analog Value 15",
+    "Analog Value 16"
 };
 const uint16_t USER_AV_UNITS[USER_AV_COUNT] = {
-    UNITS_MICROGRAMS_PER_CUBIC_METER,
-    UNITS_DEGREES_CELSIUS,
-    UNITS_PERCENT,
     UNITS_NO_UNITS,
-    UNITS_MICROGRAMS_PER_CUBIC_METER,
-    UNITS_MICROGRAMS_PER_CUBIC_METER,
-    UNITS_MICROGRAMS_PER_CUBIC_METER
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS,
+    UNITS_NO_UNITS
 };
 const float USER_AV_INITIAL_VALUES[USER_AV_COUNT] = {
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
     0.0f,
     0.0f,
     0.0f,
@@ -70,6 +107,14 @@ const float USER_AV_INITIAL_VALUES[USER_AV_COUNT] = {
     0.0f
 };
 const float USER_AV_COV_INCREMENTS[USER_AV_COUNT] = {
+    1.0f,
+    1.0f,
+    1.0f,
+    1.0f,
+    1.0f,
+    1.0f,
+    1.0f,
+    1.0f,
     1.0f,
     1.0f,
     1.0f,
@@ -111,32 +156,52 @@ const uint8_t USER_BV_INITIAL_VALUES[USER_BV_COUNT] = {
     BINARY_INACTIVE
 };
 
-const uint32_t USER_AI_INSTANCES[USER_AI_COUNT] = { 1, 2, 3, 4 };
+const uint32_t USER_AI_INSTANCES[USER_AI_COUNT] = { 1, 2, 3, 4, 5, 6, 7, 8 };
 const char *USER_AI_NAMES[USER_AI_COUNT] = {
-    "AI1",
-    "AI2",
-    "AI3",
-    "AI4"
+    "SEN54 Temp",
+    "SEN54 RH",
+    "SEN54 VOC",
+    "SEN54 PM1.0",
+    "SEN54 PM2.5",
+    "SEN54 PM4.0",
+    "SEN54 PM10",
+    "DS18B20 Temp"
 };
 const char *USER_AI_DESCRIPTIONS[USER_AI_COUNT] = {
-    "Analog Input 1",
-    "Analog Input 2",
-    "Analog Input 3",
-    "Analog Input 4"
+    "SEN54 Temperature",
+    "SEN54 Relative Humidity",
+    "SEN54 VOC Index",
+    "SEN54 PM1.0",
+    "SEN54 PM2.5",
+    "SEN54 PM4.0",
+    "SEN54 PM10",
+    "DS18B20 Temperature"
 };
 const uint16_t USER_AI_UNITS[USER_AI_COUNT] = {
     UNITS_DEGREES_CELSIUS,
-    UNITS_DEGREES_CELSIUS,
-    UNITS_DEGREES_CELSIUS,
+    UNITS_PERCENT_RELATIVE_HUMIDITY,
+    UNITS_NO_UNITS,
+    UNITS_MICROGRAMS_PER_CUBIC_METER,
+    UNITS_MICROGRAMS_PER_CUBIC_METER,
+    UNITS_MICROGRAMS_PER_CUBIC_METER,
+    UNITS_MICROGRAMS_PER_CUBIC_METER,
     UNITS_DEGREES_CELSIUS
 };
 const float USER_AI_INITIAL_VALUES[USER_AI_COUNT] = {
     0.0f,
     0.0f,
     0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
     0.0f
 };
 const float USER_AI_COV_INCREMENTS[USER_AI_COUNT] = {
+    0.1f,
+    1.0f,
+    1.0f,
+    1.0f,
     1.0f,
     1.0f,
     1.0f,

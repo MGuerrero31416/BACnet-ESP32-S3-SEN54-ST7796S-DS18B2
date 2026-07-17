@@ -90,9 +90,9 @@ void bacnet_nvs_save_ai_pv(uint32_t instance, float value) {
 void bacnet_nvs_load_ai(uint32_t instance) {
     nvs_handle_t nvs_handle;
     char key[32];
-    static char ai_names[4][65];  /* Persistent storage for loaded names */
-    static char ai_descs[4][129];  /* Persistent storage for loaded descriptions */
-    uint8_t idx = (instance > 0 && instance <= 4) ? (instance - 1) : 0;
+    static char ai_names[USER_AI_COUNT][65];  /* Persistent storage for loaded names */
+    static char ai_descs[USER_AI_COUNT][129];  /* Persistent storage for loaded descriptions */
+    uint8_t idx = (instance > 0 && instance <= USER_AI_COUNT) ? (instance - 1) : 0;
     float pv = 0.0f;
     size_t len;
 

@@ -3,12 +3,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "wifi_helper.h"
@@ -21,6 +24,9 @@
 #include "sen54.h"
 #include "mstp_rs485.h"
 #include "User_Settings.h"
+#include "bacnet_dispatcher_config.h"
+#include "bacnet_coordinator.h"
+#include "bacnet_event_bus.h"
 
 /* bacnet-stack headers */
 #include "bacnet/basic/object/device.h"
@@ -57,8 +63,12 @@ int override_nvs_on_flash = 0;  /* Exported for AV/BV modules */
 static void bacnet_register_with_bbmd(void);
 static void bacnet_receive_task(void *pvParameters);
 static void bacnet_mstp_receive_task(void *pvParameters);
+static void bacnet_core_task(void *pvParameters);
 static void bacnet_cov_task(void *pvParameters);
 static void sen54_task(void *pvParameters);
+static void bacnet_process_frame_event(const bacnet_event_t *evt);
+static void bacnet_dispatcher_tick_100ms(void);
+static void bacnet_dispatcher_tick_1s(void);
 static void profiled_handler_read_property(uint8_t *service_request,
     uint16_t service_len,
     BACNET_ADDRESS *src,
@@ -91,6 +101,7 @@ typedef struct {
 
 static TaskHandle_t bacnet_rx_task_handle = NULL;
 static TaskHandle_t bacnet_mstp_rx_task_handle = NULL;
+static TaskHandle_t bacnet_core_task_handle = NULL;
 static TaskHandle_t bacnet_cov_task_handle = NULL;
 static TaskHandle_t sen54_task_handle = NULL;
 static SemaphoreHandle_t bacnet_datalink_mutex = NULL;
@@ -99,6 +110,8 @@ static volatile uint32_t mstp_apdu_count = 0;
 static volatile uint32_t mstp_rp_total = 0;
 static volatile uint32_t mstp_wp_total = 0;
 static float mstp_rp_last_value = 0.0f;
+static uint64_t bacnet_core_last_fast_tick_us = 0;
+static uint64_t bacnet_core_last_slow_tick_us = 0;
 
 static stack_profile_task_t stack_profile_tasks[] = {
     {
@@ -112,6 +125,11 @@ static stack_profile_task_t stack_profile_tasks[] = {
         .configured_stack_words = 12288,
     },
     {
+        .task_name = "bacnet_core",
+        .task_handle = &bacnet_core_task_handle,
+        .configured_stack_words = 12288,
+    },
+    {
         .task_name = "bacnet_cov",
         .task_handle = &bacnet_cov_task_handle,
         .configured_stack_words = 24576,
@@ -122,6 +140,179 @@ static stack_profile_task_t stack_profile_tasks[] = {
         .configured_stack_words = 4096,
     },
 };
+
+#define DS18B20_GPIO GPIO_NUM_18
+#define DS18B20_CMD_SKIP_ROM 0xCC
+#define DS18B20_CMD_CONVERT_T 0x44
+#define DS18B20_CMD_READ_SCRATCHPAD 0xBE
+
+static bool ds18b20_gpio_ready = false;
+static portMUX_TYPE ds18b20_spinlock = portMUX_INITIALIZER_UNLOCKED;
+
+static void ds18b20_delay_us(uint32_t us)
+{
+    esp_rom_delay_us(us);
+}
+
+static esp_err_t ds18b20_init_gpio(void)
+{
+    if (ds18b20_gpio_ready) {
+        return ESP_OK;
+    }
+
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << DS18B20_GPIO,
+        .mode = GPIO_MODE_INPUT_OUTPUT_OD,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    esp_err_t err = gpio_config(&io_conf);
+    if (err == ESP_OK) {
+        gpio_set_level(DS18B20_GPIO, 1);
+        ds18b20_gpio_ready = true;
+    }
+
+    return err;
+}
+
+static bool ds18b20_reset(void)
+{
+    portENTER_CRITICAL(&ds18b20_spinlock);
+    gpio_set_level(DS18B20_GPIO, 0);
+    ds18b20_delay_us(480);
+    gpio_set_level(DS18B20_GPIO, 1);
+    ds18b20_delay_us(70);
+
+    bool presence = (gpio_get_level(DS18B20_GPIO) == 0);
+    ds18b20_delay_us(410);
+    portEXIT_CRITICAL(&ds18b20_spinlock);
+    return presence;
+}
+
+static void ds18b20_write_bit(uint8_t bit)
+{
+    portENTER_CRITICAL(&ds18b20_spinlock);
+    gpio_set_level(DS18B20_GPIO, 0);
+    if (bit) {
+        ds18b20_delay_us(6);
+        gpio_set_level(DS18B20_GPIO, 1);
+        ds18b20_delay_us(64);
+    } else {
+        ds18b20_delay_us(60);
+        gpio_set_level(DS18B20_GPIO, 1);
+        ds18b20_delay_us(10);
+    }
+    portEXIT_CRITICAL(&ds18b20_spinlock);
+}
+
+static uint8_t ds18b20_read_bit(void)
+{
+    uint8_t bit;
+
+    portENTER_CRITICAL(&ds18b20_spinlock);
+    gpio_set_level(DS18B20_GPIO, 0);
+    ds18b20_delay_us(6);
+    gpio_set_level(DS18B20_GPIO, 1);
+    ds18b20_delay_us(9);
+    bit = (gpio_get_level(DS18B20_GPIO) != 0) ? 1U : 0U;
+    ds18b20_delay_us(55);
+    portEXIT_CRITICAL(&ds18b20_spinlock);
+
+    return bit;
+}
+
+static void ds18b20_write_byte(uint8_t value)
+{
+    for (int i = 0; i < 8; i++) {
+        ds18b20_write_bit(value & 0x01U);
+        value >>= 1;
+    }
+}
+
+static uint8_t ds18b20_read_byte(void)
+{
+    uint8_t value = 0;
+
+    for (int i = 0; i < 8; i++) {
+        value |= (uint8_t)(ds18b20_read_bit() << i);
+    }
+
+    return value;
+}
+
+static uint8_t ds18b20_crc8(const uint8_t *data, size_t len)
+{
+    uint8_t crc = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        uint8_t byte = data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            uint8_t mix = (crc ^ byte) & 0x01U;
+            crc >>= 1;
+            if (mix) {
+                crc ^= 0x8CU;
+            }
+            byte >>= 1;
+        }
+    }
+
+    return crc;
+}
+
+static bool ds18b20_read_temperature(float *temperature_c)
+{
+    uint8_t scratchpad[9] = { 0 };
+
+    if (!temperature_c) {
+        return false;
+    }
+
+    if (ds18b20_init_gpio() != ESP_OK) {
+        return false;
+    }
+
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        memset(scratchpad, 0, sizeof(scratchpad));
+
+        if (!ds18b20_reset()) {
+            ESP_LOGW(TAG, "DS18B20 not present on GPIO%d (attempt %d/3)",
+                     (int)DS18B20_GPIO, attempt);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        ds18b20_write_byte(DS18B20_CMD_SKIP_ROM);
+        ds18b20_write_byte(DS18B20_CMD_CONVERT_T);
+        vTaskDelay(pdMS_TO_TICKS(750));
+
+        if (!ds18b20_reset()) {
+            ESP_LOGW(TAG, "DS18B20 presence pulse missing after conversion (attempt %d/3)", attempt);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        ds18b20_write_byte(DS18B20_CMD_SKIP_ROM);
+        ds18b20_write_byte(DS18B20_CMD_READ_SCRATCHPAD);
+
+        for (size_t i = 0; i < sizeof(scratchpad); i++) {
+            scratchpad[i] = ds18b20_read_byte();
+        }
+
+        if (ds18b20_crc8(scratchpad, 8) != scratchpad[8]) {
+            ESP_LOGW(TAG, "DS18B20 scratchpad CRC failed (attempt %d/3)", attempt);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        int16_t raw = (int16_t)(((uint16_t)scratchpad[1] << 8) | scratchpad[0]);
+        *temperature_c = (float)raw / 16.0f;
+        return true;
+    }
+
+    return false;
+}
 
 #define STACK_PROFILE_TASK_COUNT \
     ((int)(sizeof(stack_profile_tasks) / sizeof(stack_profile_tasks[0])))
@@ -258,22 +449,6 @@ static bool wifi_connected_now(void)
     return esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
 }
 
-static void bacnet_log_whois_iam(const uint8_t *apdu, int apdu_len, const char *link)
-{
-    if (!apdu || apdu_len < 2) {
-        return;
-    }
-
-    uint8_t pdu_type = apdu[0] & 0xF0;
-    if (pdu_type != PDU_TYPE_UNCONFIRMED_SERVICE_REQUEST) {
-        return;
-    }
-
-    uint8_t service_choice = apdu[1];
-    (void)service_choice;
-    (void)link;
-}
-
 static char datalink_bip[] = "bip";
 static char datalink_mstp[] = "mstp";
 static char *datalink_default = NULL;
@@ -298,13 +473,21 @@ static void bacnet_datalink_lock(char *name)
     if (bacnet_datalink_mutex) {
         xSemaphoreTake(bacnet_datalink_mutex, portMAX_DELAY);
     }
+#if BACNET_USE_DISPATCHER_CORE
+    bacnet_coordinator_activate_link_name(name);
+#else
     datalink_set(name);
+#endif
 }
 
 static void bacnet_datalink_unlock(void)
 {
     if (datalink_default) {
+#if BACNET_USE_DISPATCHER_CORE
+        bacnet_coordinator_activate_link_name(datalink_default);
+#else
         datalink_set(datalink_default);
+#endif
     }
     if (bacnet_datalink_mutex) {
         xSemaphoreGive(bacnet_datalink_mutex);
@@ -350,6 +533,33 @@ static void bacnet_receive_task(void *pvParameters)
         memset(&src, 0, sizeof(src));
         pdu_len = bip_receive(&src, rx_buffer, sizeof(rx_buffer), 100);
         if (pdu_len > 0) {
+            bacnet_event_t evt = {0};
+            evt.type = BACNET_EVENT_RX_FRAME_BIP;
+            evt.link_id = BACNET_EVENT_LINK_BIP;
+            evt.length = pdu_len;
+            evt.timestamp_us = (uint64_t)esp_timer_get_time();
+            evt.src = src;
+            if (evt.length > BACNET_EVENT_FRAME_MAX) {
+                evt.length = BACNET_EVENT_FRAME_MAX;
+            }
+            
+            /* CRITICAL: Deep copy frame data into self-contained event struct.
+               This ensures the event owns its data and does not depend on
+               the rx_buffer's lifetime (which may be reused by the next frame). */
+            memcpy(evt.data.frame, rx_buffer, evt.length);
+            
+            /* Sanity check: Verify frame data was copied, not pointed-to.
+               The event struct must be completely self-contained. */
+            if (evt.length > 0 && evt.data.frame[0] != rx_buffer[0]) {
+                ESP_LOGW(TAG, "BIP frame data verification failed: evt.data.frame[0]=%u rx_buffer[0]=%u",
+                    evt.data.frame[0], rx_buffer[0]);
+            }
+            
+            if (!bacnet_event_bus_enqueue(&evt, 0)) {
+                ESP_LOGD(TAG, "BIP frame enqueue dropped (queue full)");
+            }
+
+#if !BACNET_USE_DISPATCHER_CORE
             stack_profile_sample(STACK_EVT_BACNET_IP_RX);
             /* Save original source from UDP socket before NPDU decode modifies it */
             BACNET_ADDRESS orig_src = src;
@@ -362,12 +572,12 @@ static void bacnet_receive_task(void *pvParameters)
                 src = orig_src;
             }
             if (apdu_offset > 0 && apdu_offset < (int)pdu_len) {
-                bacnet_log_whois_iam(&rx_buffer[apdu_offset], pdu_len - apdu_offset, "bip");
                 bacnet_datalink_lock(datalink_bip);
                 apdu_handler(&src, &rx_buffer[apdu_offset], pdu_len - apdu_offset);
                 bacnet_datalink_unlock();
                 stack_profile_sample(STACK_EVT_BACNET_IP_RX);
             }
+#endif
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -387,6 +597,33 @@ static void bacnet_mstp_receive_task(void *pvParameters)
         memset(&src, 0, sizeof(src));
         pdu_len = dlmstp_receive(&src, rx_buffer, sizeof(rx_buffer), 0);
         if (pdu_len > 0) {
+            bacnet_event_t evt = {0};
+            evt.type = BACNET_EVENT_RX_FRAME_MSTP;
+            evt.link_id = BACNET_EVENT_LINK_MSTP;
+            evt.length = pdu_len;
+            evt.timestamp_us = (uint64_t)esp_timer_get_time();
+            evt.src = src;
+            if (evt.length > BACNET_EVENT_FRAME_MAX) {
+                evt.length = BACNET_EVENT_FRAME_MAX;
+            }
+            
+            /* CRITICAL: Deep copy frame data into self-contained event struct.
+               This ensures the event owns its data and does not depend on
+               the rx_buffer's lifetime (which may be reused by the next frame). */
+            memcpy(evt.data.frame, rx_buffer, evt.length);
+            
+            /* Sanity check: Verify frame data was copied, not pointed-to.
+               The event struct must be completely self-contained. */
+            if (evt.length > 0 && evt.data.frame[0] != rx_buffer[0]) {
+                ESP_LOGW(TAG, "MSTP frame data verification failed: evt.data.frame[0]=%u rx_buffer[0]=%u",
+                    evt.data.frame[0], rx_buffer[0]);
+            }
+            
+            if (!bacnet_event_bus_enqueue(&evt, 0)) {
+                ESP_LOGD(TAG, "MSTP frame enqueue dropped (queue full)");
+            }
+
+#if !BACNET_USE_DISPATCHER_CORE
             stack_profile_sample(STACK_EVT_MSTP_RX);
             mstp_pdu_count++;
             BACNET_ADDRESS dest = {0};
@@ -407,7 +644,6 @@ static void bacnet_mstp_receive_task(void *pvParameters)
                         mstp_wp_total++;
                     }
                 }
-                bacnet_log_whois_iam(&rx_buffer[apdu_offset], pdu_len - apdu_offset, "mstp");
                 bacnet_datalink_lock(datalink_mstp);
                 apdu_handler(&src, &rx_buffer[apdu_offset], pdu_len - apdu_offset);
                 bacnet_datalink_unlock();
@@ -417,6 +653,7 @@ static void bacnet_mstp_receive_task(void *pvParameters)
                     (unsigned)pdu_len, apdu_offset, (unsigned)src.len,
                     (unsigned)(src.len ? src.mac[0] : 0));
             }
+#endif
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
@@ -433,6 +670,14 @@ void app_main(void)
     }
 
     stack_profile_init();
+
+    bacnet_coordinator_init();
+    if (!bacnet_event_bus_init(0)) {  /* Use safe default queue size (16 items) */
+        ESP_LOGE(TAG, "Failed to initialize BACnet event bus");
+    }
+    
+    /* Give the scheduler time to stabilize queues before tasks start using them */
+    vTaskDelay(pdMS_TO_TICKS(50));
     
     /* If OVERRIDE_NVS_ON_FLASH is set, always erase NVS to reset to code defaults */
     override_nvs_on_flash = USER_OVERRIDE_NVS_ON_FLASH;
@@ -461,11 +706,18 @@ void app_main(void)
         wifi_init_sta();
 
         ESP_LOGI(TAG, "Initializing BACnet stack (B/IP)");
+#if BACNET_USE_DISPATCHER_CORE
+        bacnet_coordinator_activate_link(BACNET_LINK_BIP);
+#else
         datalink_set(datalink_bip);
+#endif
         if (!datalink_init(NULL)) {
             ESP_LOGE(TAG, "Failed to initialize BACnet datalink");
             return;
         }
+        bacnet_coordinator_set_link_ready(BACNET_LINK_BIP, true);
+        bacnet_coordinator_select_active_link();
+        bacnet_coordinator_set_active_preference(BACNET_LINK_BIP);
 
         bacnet_register_with_bbmd();
     }
@@ -475,9 +727,16 @@ void app_main(void)
         if (!bacnet_mstp_init()) {
             ESP_LOGE(TAG, "Failed to initialize BACnet MS/TP datalink");
         } else {
+#if BACNET_USE_DISPATCHER_CORE
+            bacnet_coordinator_activate_link(BACNET_LINK_MSTP);
+#else
             datalink_set(datalink_mstp);
+#endif
             if (!datalink_init((char *)&mstp_port)) {
                 ESP_LOGE(TAG, "Failed to initialize BACnet MS/TP datalink interface");
+            } else {
+                bacnet_coordinator_set_link_ready(BACNET_LINK_MSTP, true);
+                bacnet_coordinator_select_active_link();
             }
         }
     }
@@ -488,7 +747,14 @@ void app_main(void)
         datalink_default = datalink_mstp;
     }
     if (datalink_default) {
+#if BACNET_USE_DISPATCHER_CORE
+        bacnet_coordinator_activate_link_name(datalink_default);
+#else
         datalink_set(datalink_default);
+#endif
+    }
+    if (datalink_default == datalink_mstp) {
+        bacnet_coordinator_set_active_preference(BACNET_LINK_MSTP);
     }
 
     Device_Init(NULL);
@@ -511,11 +777,11 @@ void app_main(void)
     /* Initialize COV subscription list */
     handler_cov_init();
 
-    /* Create BACnet objects (AV, BV, AI, BI, BO) */
-    bacnet_create_analog_values();
-    bacnet_create_binary_values();
+    /* Create BACnet objects (AI, AV, BI, BV, BO) */
     bacnet_create_analog_inputs();
+    bacnet_create_analog_values();
     bacnet_create_binary_inputs();
+    bacnet_create_binary_values();
     bacnet_create_binary_outputs_with_gpio_sync();  /* Create BO with GPIO sync task */
 
     ESP_LOGI(TAG, "Broadcasting I-Am");
@@ -547,9 +813,21 @@ void app_main(void)
             bacnet_mstp_rx_task_handle = NULL;
         }
     }
+#if !BACNET_USE_DISPATCHER_CORE
     if (xTaskCreate(bacnet_cov_task, "bacnet_cov", 24576, NULL, 4, &bacnet_cov_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create bacnet_cov task");
     }
+#endif
+#if BACNET_USE_DISPATCHER_CORE
+    /* Increased from 12288 to 20480 bytes to accommodate:
+       - bacnet_event_t (~650 byte stack allocation)
+       - NPDU decode processing
+       - APDU handler execution with nested function calls */
+    if (xTaskCreate(bacnet_core_task, "bacnet_core", 20480, NULL, 2, &bacnet_core_task_handle) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create bacnet_core task");
+        bacnet_core_task_handle = NULL;
+    }
+#endif
     if (xTaskCreate(sen54_task, "sen54", 4096, NULL, 3, &sen54_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sen54 task");
         sen54_task_handle = NULL;
@@ -567,11 +845,13 @@ void app_main(void)
     uint8_t mstp_alive_ticks = 0;
     uint32_t stack_report_tick = 0;
     while (1) {
+#if !BACNET_USE_DISPATCHER_CORE
         if (USER_ENABLE_BACNET_IP) {
             bacnet_datalink_lock(datalink_bip);
             datalink_maintenance_timer(1);
             bacnet_datalink_unlock();
         }
+#endif
 
         if (USER_ENABLE_BACNET_MSTP && ++iam_tick % 60 == 0) {
             bacnet_datalink_lock(datalink_mstp);
@@ -608,11 +888,11 @@ void app_main(void)
         /* Update display every 2 seconds */
         if (++display_tick % 2 == 0) {
             float av1 = Analog_Value_Present_Value(1);
-            float av2 = Analog_Value_Present_Value(2);
+            float ai1 = Analog_Input_Present_Value(1);
             float av3 = Analog_Value_Present_Value(3);
             float av4 = Analog_Value_Present_Value(4);
             stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
-            display_update_values(av1, av2, av3, av4);
+            display_update_values(av1, ai1, av3, av4);
             stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
         }
 
@@ -653,17 +933,22 @@ static void bacnet_cov_task(void *pvParameters)
     }
 }
 
-/* SEN54 task - reads sensor data and writes to BACnet Analog Value objects
+/* Sensor task - reads SEN54 and DS18B20 data and writes to BACnet objects
  *
  * PERIPHERAL-TO-BACNET MAPPING:
- * - AV1 (instance 1): PM2.5 concentration (μg/m³)
- * - AV2 (instance 2): Temperature (°C)
- * - AV3 (instance 3): Relative Humidity (%RH)
- * - AV4 (instance 4): VOC Index (dimensionless)
+ * - AI1 (instance 1): SEN54 Temperature (°C)
+ * - AI2 (instance 2): SEN54 Relative Humidity (%RH)
+ * - AI3 (instance 3): SEN54 VOC Index (dimensionless)
+ * - AI4 (instance 4): SEN54 PM1.0 (ug/m3)
+ * - AI5 (instance 5): SEN54 PM2.5 (ug/m3)
+ * - AI6 (instance 6): SEN54 PM4.0 (ug/m3)
+ * - AI7 (instance 7): SEN54 PM10 (ug/m3)
+ * - AI8 (instance 8): DS18B20 Temperature (°C)
  */
 static void sen54_task(void *pvParameters)
 {
     (void)pvParameters;
+    float ds18b20_temperature = 0.0f;
     sen54_data_t sensor_data;
 
     sen54_init();
@@ -683,24 +968,37 @@ static void sen54_task(void *pvParameters)
 
         stack_profile_sample(STACK_EVT_SEN54_READ);
         if (sen54_read(&sensor_data)) {
-            Analog_Value_Present_Value_Set(1, sensor_data.pm2_5,       16);
-            Analog_Value_Present_Value_Set(2, sensor_data.temperature, 16);
-            Analog_Value_Present_Value_Set(3, sensor_data.humidity,    16);
-            Analog_Value_Present_Value_Set(4, sensor_data.voc_index,   16);
-            Analog_Value_Present_Value_Set(5, sensor_data.pm1_0,       16);
-            Analog_Value_Present_Value_Set(6, sensor_data.pm4_0,       16);
-            Analog_Value_Present_Value_Set(7, sensor_data.pm10,        16);
+            Analog_Input_Present_Value_Set(1, sensor_data.temperature);
+            Analog_Input_Present_Value_Set(2, sensor_data.humidity);
+            Analog_Input_Present_Value_Set(3, sensor_data.voc_index);
+            Analog_Input_Present_Value_Set(4, sensor_data.pm1_0);
+            Analog_Input_Present_Value_Set(5, sensor_data.pm2_5);
+            Analog_Input_Present_Value_Set(6, sensor_data.pm4_0);
+            Analog_Input_Present_Value_Set(7, sensor_data.pm10);
+            Analog_Input_Reliability_Set(1, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(2, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(3, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(4, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(5, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(6, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(7, RELIABILITY_NO_FAULT_DETECTED);
             stack_profile_sample(STACK_EVT_SEN54_READ);
         } else {
-            /* -1 signals no valid data to BACnet clients */
-            Analog_Value_Present_Value_Set(1, -1.0f, 16);
-            Analog_Value_Present_Value_Set(2, -1.0f, 16);
-            Analog_Value_Present_Value_Set(3, -1.0f, 16);
-            Analog_Value_Present_Value_Set(4, -1.0f, 16);
-            Analog_Value_Present_Value_Set(5, -1.0f, 16);
-            Analog_Value_Present_Value_Set(6, -1.0f, 16);
-            Analog_Value_Present_Value_Set(7, -1.0f, 16);
+            Analog_Input_Reliability_Set(1, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(2, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(3, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(4, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(5, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(6, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(7, RELIABILITY_UNRELIABLE_OTHER);
             stack_profile_sample(STACK_EVT_SEN54_READ);
+        }
+
+        if (ds18b20_read_temperature(&ds18b20_temperature)) {
+            Analog_Input_Present_Value_Set(8, ds18b20_temperature);
+            Analog_Input_Reliability_Set(8, RELIABILITY_NO_FAULT_DETECTED);
+        } else {
+            Analog_Input_Reliability_Set(8, RELIABILITY_UNRELIABLE_OTHER);
         }
 
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -736,4 +1034,235 @@ static void profiled_handler_write_property(
     stack_profile_sample(STACK_EVT_WRITE_PROPERTY);
     handler_write_property(service_request, service_len, src, service_data);
     stack_profile_sample(STACK_EVT_WRITE_PROPERTY);
+}
+
+static void bacnet_process_frame_event(const bacnet_event_t *evt)
+{
+#if BACNET_USE_DISPATCHER_CORE
+    if ((evt == NULL) || (evt->length == 0)) {
+        return;
+    }
+
+    if (evt->link_id == BACNET_EVENT_LINK_BIP) {
+        BACNET_ADDRESS src = evt->src;
+        BACNET_ADDRESS orig_src = src;
+        BACNET_ADDRESS dest = {0};
+        BACNET_NPDU_DATA npdu_data = {0};
+        int apdu_offset = bacnet_npdu_decode(
+            (uint8_t *)evt->data.frame, evt->length, &dest, &src, &npdu_data);
+
+        if (src.len == 0) {
+            src = orig_src;
+        }
+
+        if (apdu_offset > 0 && apdu_offset < (int)evt->length) {
+            bacnet_datalink_lock(datalink_bip);
+            apdu_handler(&src, (uint8_t *)&evt->data.frame[apdu_offset], evt->length - apdu_offset);
+            bacnet_datalink_unlock();
+        }
+    } else if (evt->link_id == BACNET_EVENT_LINK_MSTP) {
+        BACNET_ADDRESS src = evt->src;
+
+        /* Preserve MS/TP diagnostic counters without changing protocol flow. */
+        BACNET_ADDRESS dest = {0};
+        BACNET_NPDU_DATA npdu_data = {0};
+        int apdu_offset = bacnet_npdu_decode(
+            (uint8_t *)evt->data.frame, evt->length, &dest, &src, &npdu_data);
+        if (apdu_offset > 0 && apdu_offset < (int)evt->length) {
+            mstp_apdu_count++;
+            if ((apdu_offset + 4) <= (int)evt->length) {
+                uint8_t pdu_type = evt->data.frame[apdu_offset] & 0xF0;
+                uint8_t service_choice = evt->data.frame[apdu_offset + 3];
+                if (pdu_type == PDU_TYPE_CONFIRMED_SERVICE_REQUEST &&
+                    service_choice == SERVICE_CONFIRMED_READ_PROPERTY) {
+                    mstp_rp_total++;
+                    mstp_rp_last_value = Analog_Value_Present_Value(1);
+                } else if (pdu_type == PDU_TYPE_CONFIRMED_SERVICE_REQUEST &&
+                    service_choice == SERVICE_CONFIRMED_WRITE_PROPERTY) {
+                    mstp_wp_total++;
+                }
+            }
+
+            bacnet_datalink_lock(datalink_mstp);
+            apdu_handler(&src, (uint8_t *)&evt->data.frame[apdu_offset], evt->length - apdu_offset);
+            bacnet_datalink_unlock();
+        } else {
+            ESP_LOGW(TAG, "MS/TP RX frame decode failed: len=%u apdu_offset=%d src.len=%u src.mac=%u",
+                (unsigned)evt->length, apdu_offset, (unsigned)src.len,
+                (unsigned)(src.len ? src.mac[0] : 0));
+        }
+    }
+#else
+    (void)evt;
+#endif
+}
+
+/* BO1 GPIO sync: replaces bo1_gpio_sync_task */
+static uint8_t dispatcher_bo1_last_state = BINARY_INACTIVE;
+
+/* SEN54 dispatcher state */
+static bool dispatcher_sen54_initialized = false;
+static int32_t dispatcher_sen54_init_tick_count = -5;  /* Wait 5 seconds before reading */
+static uint32_t dispatcher_sen54_read_tick_count = 0;   /* Read every 2 seconds (2 ticks of 1s) */
+
+static void bacnet_dispatcher_tick_100ms(void)
+{
+    tsm_timer_milliseconds(100);
+
+    if (USER_ENABLE_BACNET_IP) {
+        bacnet_datalink_lock(datalink_bip);
+        stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
+        handler_cov_task();
+        stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
+        bacnet_datalink_unlock();
+    }
+
+    if (USER_ENABLE_BACNET_MSTP) {
+        bacnet_datalink_lock(datalink_mstp);
+        stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
+        handler_cov_task();
+        stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
+        bacnet_datalink_unlock();
+    }
+
+    /* BO1 GPIO sync: read present value every 100ms (replaces bo1_gpio_sync_task) */
+    dispatcher_bo1_last_state = Binary_Output_Present_Value(USER_BO_INSTANCES[0]);
+}
+
+/* SEN54 dispatcher handler: replaces sen54_task periodic read (every 2 seconds) */
+static void bacnet_dispatcher_sen54_handler(void)
+{
+    /* Initialize on first call */
+    if (!dispatcher_sen54_initialized) {
+        if (dispatcher_sen54_init_tick_count < 0) {
+            dispatcher_sen54_init_tick_count++;
+            /* After 5 seconds (5 iterations of 1s tick), init the sensor */
+            if (dispatcher_sen54_init_tick_count == 0) {
+                sen54_init();
+                dispatcher_sen54_initialized = true;
+            }
+            return;  /* Skip reading until init complete */
+        }
+    }
+
+    /* Check BV1 for reset command (every tick) */
+    if (Binary_Value_Present_Value(1) == BINARY_ACTIVE) {
+        ESP_LOGI(TAG, "BV1 ACTIVE: sending SEN54 full reset");
+        esp_err_t err = sen54_full_reset();
+        ESP_LOGI(TAG, "SEN54 full reset %s", err == ESP_OK ? "OK" : "FAILED");
+        Binary_Value_Present_Value_Set(1, BINARY_INACTIVE);
+        dispatcher_sen54_read_tick_count = 0;  /* Reset read timer after reset */
+        return;
+    }
+
+    /* Perform sensor read every 2 seconds (i.e., every 2nd iteration of 1s tick) */
+    dispatcher_sen54_read_tick_count++;
+    if (dispatcher_sen54_read_tick_count >= 2) {
+        dispatcher_sen54_read_tick_count = 0;
+        float ds18b20_temperature = 0.0f;
+        sen54_data_t sensor_data;
+
+        stack_profile_sample(STACK_EVT_SEN54_READ);
+        if (sen54_read(&sensor_data)) {
+            Analog_Input_Present_Value_Set(1, sensor_data.temperature);
+            Analog_Input_Present_Value_Set(2, sensor_data.humidity);
+            Analog_Input_Present_Value_Set(3, sensor_data.voc_index);
+            Analog_Input_Present_Value_Set(4, sensor_data.pm1_0);
+            Analog_Input_Present_Value_Set(5, sensor_data.pm2_5);
+            Analog_Input_Present_Value_Set(6, sensor_data.pm4_0);
+            Analog_Input_Present_Value_Set(7, sensor_data.pm10);
+            Analog_Input_Reliability_Set(1, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(2, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(3, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(4, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(5, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(6, RELIABILITY_NO_FAULT_DETECTED);
+            Analog_Input_Reliability_Set(7, RELIABILITY_NO_FAULT_DETECTED);
+            stack_profile_sample(STACK_EVT_SEN54_READ);
+        } else {
+            Analog_Input_Reliability_Set(1, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(2, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(3, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(4, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(5, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(6, RELIABILITY_UNRELIABLE_OTHER);
+            Analog_Input_Reliability_Set(7, RELIABILITY_UNRELIABLE_OTHER);
+            stack_profile_sample(STACK_EVT_SEN54_READ);
+        }
+
+        if (ds18b20_read_temperature(&ds18b20_temperature)) {
+            Analog_Input_Present_Value_Set(8, ds18b20_temperature);
+            Analog_Input_Reliability_Set(8, RELIABILITY_NO_FAULT_DETECTED);
+        } else {
+            Analog_Input_Reliability_Set(8, RELIABILITY_UNRELIABLE_OTHER);
+        }
+    }
+}
+
+static void bacnet_dispatcher_tick_1s(void)
+{
+    handler_cov_timer_seconds(1);
+
+    if (USER_ENABLE_BACNET_IP) {
+        bacnet_datalink_lock(datalink_bip);
+        datalink_maintenance_timer(1);
+        bacnet_datalink_unlock();
+    }
+
+    /* SEN54 periodic read handler (replaces sen54_task) */
+    bacnet_dispatcher_sen54_handler();
+}
+
+static void bacnet_core_task(void *pvParameters)
+{
+    (void)pvParameters;
+    /* Use static allocation instead of stack to save ~650 bytes of stack space.
+       This is safe because bacnet_core_task is the only consumer of evt. */
+    static bacnet_event_t evt = {0};
+
+#if BACNET_USE_DISPATCHER_CORE
+    bacnet_core_last_fast_tick_us = (uint64_t)esp_timer_get_time();
+    bacnet_core_last_slow_tick_us = bacnet_core_last_fast_tick_us;
+    ESP_LOGI(TAG, "bacnet_core_task started (dispatcher mode)");
+#else
+    ESP_LOGI(TAG, "bacnet_core_task started (shadow mode)");
+#endif
+
+    /* Allow system to stabilize before starting queue operations */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    ESP_LOGI(TAG, "bacnet_core_task entering main loop");
+
+    while (1) {
+        if (bacnet_event_bus_dequeue(&evt, pdMS_TO_TICKS(100))) {
+#if BACNET_USE_DISPATCHER_CORE
+            if ((evt.type == BACNET_EVENT_RX_FRAME_BIP) ||
+                (evt.type == BACNET_EVENT_RX_FRAME_MSTP)) {
+                /* Sanity check: Verify event structure is valid before processing.
+                   This ensures frame data was properly copied and event is self-contained. */
+                if (evt.length > 0 && evt.length <= BACNET_EVENT_FRAME_MAX) {
+                    bacnet_process_frame_event(&evt);
+                } else {
+                    ESP_LOGW(TAG, "dispatcher: invalid event length %u (max %u)",
+                        (unsigned)evt.length, BACNET_EVENT_FRAME_MAX);
+                }
+            }
+#else
+            ESP_LOGD(TAG, "bacnet_core_task received event: type=%d len=%u",
+                (int)evt.type, (unsigned)evt.length);
+#endif
+        }
+
+#if BACNET_USE_DISPATCHER_CORE
+        uint64_t now_us = (uint64_t)esp_timer_get_time();
+        if ((now_us - bacnet_core_last_fast_tick_us) >= 100000ULL) {
+            bacnet_core_last_fast_tick_us += 100000ULL;
+            bacnet_dispatcher_tick_100ms();
+        }
+        if ((now_us - bacnet_core_last_slow_tick_us) >= 1000000ULL) {
+            bacnet_core_last_slow_tick_us += 1000000ULL;
+            bacnet_dispatcher_tick_1s();
+        }
+#endif
+    }
 }

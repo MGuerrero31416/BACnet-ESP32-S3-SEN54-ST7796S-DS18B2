@@ -1,22 +1,22 @@
-# ESP32-S3 BACnet MS/TP WiFi Display
+# ESP32-S3 BACnet/IP + MS/TP WiFi Display (SEN54) (DS18B2)
 
-ESP32-S3 based BACnet/IP device with TFT display featuring 20 BACnet objects: 4 Analog Values, 4 Binary Values, 4 Analog Inputs, 4 Binary Inputs, and 4 Binary Outputs. Includes built-in SEN54 air quality sensor for PM2.5/PM1.0/PM4.0/PM10, temperature, humidity, and VOC/NOx index monitoring.
+ESP32-S3 based BACnet controller with a TFT display and 36 BACnet objects: 16 Analog Values, 4 Binary Values, 8 Analog Inputs, 4 Binary Inputs, and 4 Binary Outputs. It includes SEN54 air-quality monitoring for PM2.5/PM1.0/PM4.0/PM10, temperature, humidity, and VOC index data.
 
-It can simultaneously connect the BACnet device through WiFi (BACnet/IP), WiFi to Ethernet bridge, and MS/TP (RS485 using a MAX485 module).
+The device supports WiFi (BACnet/IP) and BACnet MS/TP over RS485, and can be configured for dual-stack operation.
 
-You can easily add extra BACnet objects and map them to ESP32 GPIO for analog and digital inputs/outputs.
+Additional BACnet objects can be added and mapped to ESP32 GPIO for analog and digital I/O.
 
 ## Features
 
 - **BACnet/IP Protocol**: Full BACnet/IP stack implementation
-- **BACnet MS/TP**: RS485 MS/TP support alongside BACnet/IP (dual stack)
-- **Live Display**: Real-time monitoring of BACnet objects on 320x480 TFT display
-- **20 BACnet Objects**:
-  - 4 Analog Values (AV1-4) - read/write with COV and NVS persistence
-  - 4 Binary Values (BV1-4) - read/write with COV and NVS persistence
-  - 4 Analog Inputs (AI1-4) - sensor inputs with COV and NVS persistence
-  - 4 Binary Inputs (BI1-4) - binary states with COV and NVS persistence
-  - 4 Binary Outputs (BO1-4) - writable control outputs with COV and NVS persistence
+- **BACnet MS/TP**: RS485 MS/TP support alongside BACnet/IP (dual stack capable)
+- **Live Display**: Real-time monitoring of BACnet objects on a 320x480 TFT display
+- **36 BACnet Objects**:
+  - 16 Analog Values (AV1-16): read/write with COV and NVS persistence
+  - 4 Binary Values (BV1-4): read/write with COV and NVS persistence
+  - 8 Analog Inputs (AI1-8): sensor inputs with COV and NVS persistence
+  - 4 Binary Inputs (BI1-4): binary states with COV and NVS persistence
+  - 4 Binary Outputs (BO1-4): writable control outputs with COV and NVS persistence
 - **Writable Metadata**: Object `Name` and `Description` are writable for AV/BV/AI/BI/BO
 - **WiFi Connectivity**: ESP32 with built-in WiFi for BACnet/IP communication
 - **Arduino Framework**: Leverages Arduino ecosystem for easy hardware control
@@ -24,7 +24,7 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
 - **Persistent Storage**: Attribute values modifiable from BACnet supervisor are automatically saved to ESP32 non-volatile memory (NVS) for retention across power cycles
 - **NVS Override**: When `USER_OVERRIDE_NVS_ON_FLASH=1`, NVS is erased on boot and all values reset to defaults
 - **Centralized Configuration**: User settings are centralized in [main/User_Settings.c](main/User_Settings.c)
-- **Air Quality Monitoring**: SEN54 sensor with PM2.5/PM1.0/PM4.0/PM10, temperature, humidity, and VOC/NOx index with automatic BACnet integration
+- **Air Quality Monitoring**: SEN54 sensor with PM2.5/PM1.0/PM4.0/PM10, temperature, humidity, and VOC index with BACnet Analog Input integration
 
 ## Photos
 ![SEN54](docs/images/SEN54.jpg)
@@ -33,7 +33,7 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
 ## Hardware Requirements
 
 - **Microcontroller**: ESP32-S3
-- **Display**: ST7796S SPI TFT (320x480 panel, rotation 3 used)
+- **Display**: ST7796S SPI TFT (320x480 panel, runtime rotation 1)
 - **Display Connections**:
   - MOSI (SDA): GPIO 10
   - SCLK (SCL): GPIO 9
@@ -41,6 +41,9 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
   - DC: GPIO 12
   - RST: GPIO 11
   - BL (Backlight): GPIO 14
+- **DS18B2 Temperature Sensor**:
+  - MOSI (SDA): GPIO 18
+
 
 ## Hardware Components
 
@@ -59,12 +62,15 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
   - GND: ESP32 GND
 - **Measurements**:
   - PM1.0, PM2.5, PM4.0, PM10 (µg/m³)
-  - Temperature (°C) → mapped to **Analog Value 2**
-  - Relative Humidity (%RH) → mapped to **Analog Value 3**
-  - VOC Index (1–500) → mapped to **Analog Value 4**
-  - NOx Index (1–500, available via API)
-  - PM2.5 → mapped to **Analog Value 1**
-- **BACnet Mapping**: Modify `sen54_task` in [main/main.c](main/main.c) to change which measurements map to which AV objects.
+  - Temperature (°C) → mapped to **Analog Input 1**
+  - Relative Humidity (%RH) → mapped to **Analog Input 2**
+  - VOC Index (1–500) → mapped to **Analog Input 3**
+  - PM1.0 → mapped to **Analog Input 4**
+  - PM2.5 → mapped to **Analog Input 5**
+  - PM4.0 → mapped to **Analog Input 6**
+  - PM10 → mapped to **Analog Input 7**
+  - Temp (from DS18B2) → mapped to **Analog Input 8**
+- **BACnet Mapping**: Sensor mapping is handled in [main/main.c](main/main.c) (dispatcher SEN54 handler) and written to AI objects.
 - **Update Frequency**: 2-second intervals
 - **Features**:
   - CRC-8 validation on all I2C responses (Sensirion polynomial 0x31)
@@ -80,12 +86,10 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
 ### BACnet MS/TP (RS485)
 - **Transceiver**: MAX485 or equivalent RS485 converter
 - **UART**: UART2
-- **Connections**:
-  - RO (RX) → ESP32 GPIO17 (ESP32-S3 U2 RXD)
-  - DI (TX) → ESP32 GPIO18 (ESP32-S3 U2 TXD)
-  - DE/RE → ESP32 GPIO16
+- **Connections**: RS485 transceiver GPIO mapping is project-specific and configured in [main/mstp_rs485.c](main/mstp_rs485.c)
 - **Baud Rate**: 38400 (default)
 - **MS/TP Settings**: MAC 21, Max Master 127, Max Info Frames 80
+- **Default State**: Disabled by default (`USER_ENABLE_BACNET_MSTP=false`) in [main/User_Settings.c](main/User_Settings.c)
 - **Discovery**: Some controllers (e.g., NAE) require manual add on the MS/TP field bus
 
 ## GPIO Summary
@@ -94,54 +98,35 @@ You can easily add extra BACnet objects and map them to ESP32 GPIO for analog an
 |---------|-------------|---------------------|------------|
 | GPIO 4  | SEN54       | SDA (I2C Data)      | [components/sen54/sen54.h](components/sen54/sen54.h)
 | GPIO 5  | SEN54       | SCL (I2C Clock)     | [components/sen54/sen54.h](components/sen54/sen54.h)
-| GPIO 9  | TFT Display | SCLK (SPI Clock)    | [main/display.cpp](main/display.cpp)
-| GPIO 10 | TFT Display | MOSI SDA (SPI Data) | [main/display.cpp](main/display.cpp)
-| GPIO 11 | TFT Display | RST (Reset)         | [main/display.cpp](main/display.cpp)
-| GPIO 12 | TFT Display | DC (Data/Command)   | [main/display.cpp](main/display.cpp)
-| GPIO 13 | TFT Display | CS (Chip Select)    | [main/display.cpp](main/display.cpp)
-| GPIO 14 | TFT Display | BACKLIGHT           | [main/display.cpp](main/display.cpp)
-| GPIO 16 | MAX485      | DE/RE               | [main/mstp_rs485.c](main/mstp_rs485.c)
-| GPIO 17 | MAX485      | RO (RX)             | [main/mstp_rs485.c](main/mstp_rs485.c)
-| GPIO 18 | MAX485      | DI (TX)             | [main/mstp_rs485.c](main/mstp_rs485.c)
+| GPIO 9  | TFT Display | SCLK (SPI Clock)    | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 10 | TFT Display | MOSI SDA (SPI Data) | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 11 | TFT Display | RST (Reset)         | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 12 | TFT Display | DC (Data/Command)   | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 13 | TFT Display | CS (Chip Select)    | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 14 | TFT Display | BACKLIGHT           | [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h)
+| GPIO 18 | DS18B2      | Temperature         | 
 
 
 ## Build Requirements
 
-- ESP-IDF v5.5.1
+- ESP-IDF v5.5.x
 - Python 3.11+
 - xtensa-esp-elf toolchain
 
-## Building
 
-```bash
-cd c:\git\BACnet-ESP32-S3-SEN54-BigDisplay
-idf.py build
 ```
-
-## Flashing
-
-```bash
-idf.py flash -p COM3
-```
-
-Or use the provided build/flash tasks in VS Code.
-
-## Monitoring Serial Output
-
-```bash
-idf.py monitor -p COM3
-```
-
-## Configuration
-
 ### Display Driver Settings
 
-Display initialization and pin mapping are configured in [main/display.cpp](main/display.cpp), including:
+Display runtime initialization is handled in [main/display.cpp](main/display.cpp), while TFT pin mapping and panel setup are defined in [components/TFT_eSPI/User_Setup.h](components/TFT_eSPI/User_Setup.h), including:
 
-- `SPI.begin(9, -1, 10, 13)`
-- `tft.init(320, 480, 0, 0, ST7796S_BGR)`
-- `tft.invertDisplay(true)`
-- `tft.setRotation(3)`
+- `tft.init()`
+- `tft.setRotation(1)`
+- `#define TFT_MOSI 10`
+- `#define TFT_SCLK 9`
+- `#define TFT_CS 13`
+- `#define TFT_DC 12`
+- `#define TFT_RST 11`
+- `#define TFT_BL 14`
 
 ### FreeRTOS Configuration
 
@@ -163,11 +148,11 @@ Most user-configurable settings are centralized in [main/User_Settings.c](main/U
 
 ### BACnet Object Configuration
 
-- **Analog Values (AV1-4)**: Configure names, descriptions, units, and initial values in [main/User_Settings.c](main/User_Settings.c)
+- **Analog Values (AV1-16)**: Configure names, descriptions, units, and initial values in [main/User_Settings.c](main/User_Settings.c)
 
 - **Binary Values (BV1-4)**: Configure names, descriptions, active/inactive text, and initial states in [main/User_Settings.c](main/User_Settings.c)
 
-- **Analog Inputs (AI1-4)**: Configure names, descriptions, units, and COV increments in [main/User_Settings.c](main/User_Settings.c). Read-only inputs suitable for sensor integration.
+- **Analog Inputs (AI1-8)**: Configure names, descriptions, units, and COV increments in [main/User_Settings.c](main/User_Settings.c). Read-only inputs suitable for sensor integration.
 
 - **Binary Inputs (BI1-4)**: Configure names, descriptions, active/inactive text in [main/User_Settings.c](main/User_Settings.c). Read-only binary states.
 
@@ -175,7 +160,7 @@ Most user-configurable settings are centralized in [main/User_Settings.c](main/U
 
 ### Sensor Data Mapping
 
-- **SEN54 Parameters**: Select which sensor measurement (PM1.0, PM2.5, PM4.0, PM10, temperature, humidity, VOC index, or NOx index) to map to each Analog Value object in [main/main.c](main/main.c) — look for the `sen54_task()` function. Current default mapping: AV1=PM2.5, AV2=Temperature, AV3=Humidity, AV4=VOC Index.
+- **SEN54 Parameters**: Update the sensor-to-object mapping in [main/main.c](main/main.c) (SEN54 dispatcher handler). Current default mapping: AI1=Temperature, AI2=Humidity, AI3=VOC Index, AI4=PM1.0, AI5=PM2.5, AI6=PM4.0, AI7=PM10, AI8=DS18B20 Temperature.
 
 ## Architecture
 
@@ -198,12 +183,12 @@ Most user-configurable settings are centralized in [main/User_Settings.c](main/U
 
 ### Display Layout
 
-The display renders the four Analog Values only. BV, AI, BI, and BO objects are not shown on screen.
+The display renders four primary values. BV, BI, and BO objects are not shown on screen.
 
 | Item | Panel | Display |
 |------|-------|---------|
 | AV1 | AQI — bottom left | PM2.5 (µg/m³), numeric (1 decimal) |
-| AV2 | Mid — left | Temperature (°C), numeric (1 decimal) |
+| AI1 | Mid — left | Temperature (°C), numeric (1 decimal) |
 | AV3 | Mid — right | Relative Humidity (%RH), numeric (1 decimal) |
 | AV4 | AQI — bottom right | VOC Index (1–500), numeric (1 decimal) |
 
@@ -213,16 +198,16 @@ The device broadcasts its Device ID and manages BACnet objects that can be read/
 
 ### BACnet Objects Exposed
 
-- **Device**: 31418 (configurable in [main/User_Settings.c](main/User_Settings.c))
-- **Analog Values**: Instance 1, 2, 3, 4
+- **Device**: 55502 by default (configurable in [main/User_Settings.c](main/User_Settings.c))
+- **Analog Values**: Instances 1 through 16
 - **Binary Values**: Instance 1, 2, 3, 4
-- **Analog Inputs**: Instance 1, 2, 3, 4
+- **Analog Inputs**: Instances 1 through 8
 - **Binary Inputs**: Instance 1, 2, 3, 4
 - **Binary Outputs**: Instance 1, 2, 3, 4
 
 ## Modifications to bacnet-stack
 
-This project uses the official [bacnet-stack](https://github.com/bacnet-stack/bacnet-stack) with the following modifications:
+This project uses the official [bacnet-stack](https://github.com/bacnet-stack/bacnet-stack) with the following project-specific modifications:
 
 - **[components/bacnet-stack/](components/bacnet-stack/)** - Configured as ESP-IDF component
 - Simplified for embedded systems (reduced features, optimized for ESP32)

@@ -123,7 +123,7 @@ static AqiInfo pm25_aqi_info(float pm25)
 
 static AqiInfo voc_aqi_info(float voc)
 {
-    if (voc < 99.0f)   return { COL_AQI_GOOD,      TFT_BLACK, "Good" };
+    if (voc < 100.0f)   return { COL_AQI_GOOD,      TFT_BLACK, "Good" };
     if (voc < 250.0f)   return { COL_AQI_MODERATE,  TFT_BLACK, "Moderate" };
     if (voc < 350.0f)   return { COL_AQI_SENS,       TFT_BLACK, "Polluted" };
     if (voc < 400.0f)   return { COL_AQI_UNHEALTHY,  TFT_WHITE, "Very Polluted" };
@@ -228,37 +228,37 @@ static void draw_aqi_panel(int16_t px, int16_t py, int16_t pw, int16_t ph,
     st->initialized = true;
 }
 
-static void draw_aqi_panels(float pm25, float voc)
+static void draw_aqi_panels(float pm25, float voc) // PM2.5 AQI and VOC Index panels
 {
     char num_buf[16];
 
     AqiInfo pm = pm25_aqi_info(pm25);
     snprintf(num_buf, sizeof(num_buf), "%.1f", pm25);
     draw_aqi_panel(AQI_LEFT_X,  AQI_PANEL_Y, AQI_LEFT_W,  AQI_PANEL_H,
-                   "PM2.5 AQI", num_buf, "ug/m3",
+                   "PM2.5 AQI", num_buf, "ug/m3", // AQI category string
                    pm.label, pm.bgColor, pm.fgColor, 2);
 
     AqiInfo vo = voc_aqi_info(voc);
     snprintf(num_buf, sizeof(num_buf), "%.0f", voc);
     draw_aqi_panel(AQI_RIGHT_X, AQI_PANEL_Y, AQI_RIGHT_W, AQI_PANEL_H,
-                   "VOC Index", num_buf, "(1 - 500)",
+                   "VOC Index", num_buf, "(1 - 500)", // AQI category string
                    vo.label, vo.bgColor, vo.fgColor, 3);
 }
 
-static void draw_mid_panels(float temp, float hum)
+static void draw_mid_panels(float temp, float hum) // Temperature and Humidity panels
 {
     char num_buf[16];
 
     AqiInfo ti = temp_info(temp);
     snprintf(num_buf, sizeof(num_buf), "%.1f", temp);
     draw_aqi_panel(MID_LEFT_X,  MID_PANEL_Y, MID_LEFT_W,  MID_PANEL_H,
-                   "Temperature", num_buf, "C",
+                   "Temperature", num_buf, "C", // AQI category string
                    ti.label, ti.bgColor, ti.fgColor, 0);
 
     AqiInfo hi = hum_info(hum);
     snprintf(num_buf, sizeof(num_buf), "%.1f", hum);
     draw_aqi_panel(MID_RIGHT_X, MID_PANEL_Y, MID_RIGHT_W, MID_PANEL_H,
-                   "Humidity", num_buf, "%",
+                   "Humidity", num_buf, "%", // AQI category string
                    hi.label, hi.bgColor, hi.fgColor, 1);
 }
 
@@ -390,7 +390,7 @@ extern "C" void display_set_link_status(bool wifi_connected, bool mstp_connected
     draw_link_indicators(false);
 }
 
-extern "C" void display_update_values(float av1, float av2, float av3, float av4) {
+extern "C" void display_update_values(float av1, float av2, float av3, float av4) { 
     // Refresh header IP occasionally and only if it changed to avoid flicker.
     s_header_refresh_tick++;
     if ((s_header_refresh_tick % 5U) == 0U) {
