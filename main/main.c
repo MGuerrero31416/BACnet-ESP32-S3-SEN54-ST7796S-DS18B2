@@ -713,8 +713,9 @@ void app_main(void)
         display_set_link_status(
             wifi_connected_now(),
             USER_ENABLE_BACNET_MSTP && (mstp_alive_ticks > 0));
-        
+
         /* Update display every 2 seconds */
+        if (++display_tick % 2 == 0) {
             float ai1_temp = Analog_Input_Present_Value(1);
             float ai2_humidity = Analog_Input_Present_Value(2);
             float ai3_voc = Analog_Input_Present_Value(3);
@@ -728,30 +729,16 @@ void app_main(void)
                 ai2_humidity,
                 ai3_voc);
 
-stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
-
-display_update_values(
-    ai5_pm25,
-    ai1_temp,
-    ai2_humidity,
-    ai3_voc);
-
-stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
-            stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
-            display_update_values(
-                                    ai5_pm25,
-                                    ai1_temp,
-                                    ai2_humidity,
-                                    ai3_voc);
             stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
         }
 
         if (++stack_report_tick % 30 == 0) {
             stack_profile_log_report();
         }
-        
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+}
 
 
 /* COV task - handles COV timer and notifications */
