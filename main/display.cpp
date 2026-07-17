@@ -228,7 +228,7 @@ static void draw_aqi_panel(int16_t px, int16_t py, int16_t pw, int16_t ph,
     st->initialized = true;
 }
 
-static void draw_aqi_panels(float pm25, float voc) // PM2.5 AQI and VOC Index panels
+static void draw_aqi_panels(float pm25, float voc) // PM2.5     and VOC Index panels
 {
     char num_buf[16];
 
@@ -261,6 +261,48 @@ static void draw_mid_panels(float temp, float hum) // Temperature and Humidity p
                    "Humidity", num_buf, "%", // AQI category string
                    hi.label, hi.bgColor, hi.fgColor, 1);
 }
+
+// ------------------------------------------------------------------
+// Insert dsb18b20 temperature 
+
+static void draw_ds18b20_temperature(
+    float temp_ds18b20,
+    float sen54_temperature)
+{
+    char text[16];
+
+    snprintf(
+        text,
+        sizeof(text),
+        "DS %.1f",
+        temp_ds18b20);
+
+    /* Match the current Temperature panel background and text colours. */
+    AqiInfo ti = temp_info(sen54_temperature);
+
+    /*
+     * Small area at the upper-right of the coloured Temperature panel.
+     * Adjust X/Y slightly later if desired.
+     */
+    const int16_t x = MID_LEFT_X + MID_LEFT_W - 7;
+    const int16_t y = MID_PANEL_Y + AQI_TITLE_H + 9;
+
+    /* Clear only the small overlay area. */
+    tft.fillRect(
+        MID_LEFT_X + MID_LEFT_W - 62,
+        MID_PANEL_Y + AQI_TITLE_H + 5,
+        56,
+        14,
+        ti.bgColor);
+
+    /* TFT_eSPI built-in font 1: small 6x8 pixel font. */
+    tft.setTextFont(1);
+    tft.setTextColor(ti.fgColor, ti.bgColor, true);
+    tft.setTextDatum(TR_DATUM);
+    tft.drawString(text, x, y);
+}
+
+
 
 // ------------------------------------------------------------------
 
@@ -405,6 +447,9 @@ extern "C" void display_update_values(
 
     // draw_mid_panels / draw_aqi_panels delegate change-detection to
     // draw_aqi_panel, which returns immediately if nothing has changed.
-    draw_mid_panels(temperature, humidity);
+    draw_mid_panels(temperature, humidity); // May clear and redraw yellow area
+                draw_ds18b20_temperature(  // Restores small DS18B20 overlay
+                temp_ds18b20,
+                temperature);
     draw_aqi_panels(pm25, voc);
 }
