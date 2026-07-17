@@ -75,8 +75,8 @@ struct PanelState {
     char     cat_str[32];
     bool     initialized;
 };
-// Indices: 0=Temperature, 1=Humidity, 2=PM2.5 AQI, 3=VOC Index
-static PanelState s_panel[4] = {};
+// Indices: 0=Temperature, 1=Humidity, 2=PM2.5 AQI, 3=VOC Index, 4=temp_ds18b20
+static PanelState s_panel[5] = {};
 
 // Font heights pre-computed once in display_init to avoid loading/unloading
 // fonts on every partial redraw.
@@ -158,7 +158,7 @@ static AqiInfo hum_info(float hum)
 // partial update (bg colour same, but value/category changed):
 //   – content area only; title bar and border are left untouched
 //
-// panel_idx:  0=Temperature, 1=Humidity, 2=PM2.5 AQI, 3=VOC Index
+// panel_idx:  0=Temperature, 1=Humidity, 2=PM2.5 AQI, 3=VOC Index, 4=temp_ds18b20
 static void draw_aqi_panel(int16_t px, int16_t py, int16_t pw, int16_t ph,
                             const char *title,
                             const char *num_str,  const char *unit_str,
@@ -394,7 +394,8 @@ extern "C" void display_update_values(
                                         float pm25,
                                         float temperature,
                                         float humidity,
-                                        float voc) { 
+                                        float voc,
+                                        float temp_ds18b20) { 
     // Refresh header IP occasionally and only if it changed to avoid flicker.
     s_header_refresh_tick++;
     if ((s_header_refresh_tick % 5U) == 0U) {

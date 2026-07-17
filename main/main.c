@@ -720,6 +720,7 @@ void app_main(void)
             float ai2_humidity = Analog_Input_Present_Value(2);
             float ai3_voc = Analog_Input_Present_Value(3);
             float ai5_pm25 = Analog_Input_Present_Value(5);
+            float ai8_ds18b20_temp = Analog_Input_Present_Value(8);
 
             stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
 
@@ -727,7 +728,8 @@ void app_main(void)
                 ai5_pm25,
                 ai1_temp,
                 ai2_humidity,
-                ai3_voc);
+                ai3_voc,
+                ai8_ds18b20_temp);
 
             stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
         }

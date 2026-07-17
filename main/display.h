@@ -13,7 +13,8 @@ void display_init(void);
             float pm25,
             float temperature,
             float humidity,
-            float voc);
+            float voc,
+            float temp_ds18b20);
 
 /* Update header link indicators (WiFi and MS/TP). */
 void display_set_link_status(bool wifi_connected, bool mstp_connected);
