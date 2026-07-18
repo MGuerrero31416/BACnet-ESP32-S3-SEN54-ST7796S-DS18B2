@@ -1,7 +1,39 @@
-idf_component_register(SRCS "binary_output.c" "binary_input.c" "analog_input.c" "binary_value.c" "analog_value.c" "main.c" "wifi_helper.c" "display.cpp" "mstp_rs485.c" "User_Settings.c" "bacnet_coordinator.c" "bacnet_event_bus.c"
-                       REQUIRES bacnet-stack TFT_eSPI espressif__arduino-esp32 sen54 ds18b20
-                       PRIV_REQUIRES spi_flash nvs_flash esp_event esp_wifi esp_netif driver esp_timer
-                       INCLUDE_DIRS "" "fonts")
+idf_component_register(
+    SRCS
+        "binary_output.c"
+        "binary_input.c"
+        "analog_input.c"
+        "binary_value.c"
+        "analog_value.c"
+        "main.c"
+        "sensor_service.c"
+        "wifi_helper.c"
+        "display.cpp"
+        "mstp_rs485.c"
+        "User_Settings.c"
+        "bacnet_coordinator.c"
+        "bacnet_event_bus.c"
+
+    REQUIRES
+        bacnet-stack
+        TFT_eSPI
+        espressif__arduino-esp32
+        sen54
+        ds18b20
+
+    PRIV_REQUIRES
+        spi_flash
+        nvs_flash
+        esp_event
+        esp_wifi
+        esp_netif
+        driver
+        esp_timer
+
+    INCLUDE_DIRS
+        ""
+        "fonts"
+)
 
 # Add linker flags for Arduino log wrapper compatibility
 target_link_options(${COMPONENT_LIB} INTERFACE

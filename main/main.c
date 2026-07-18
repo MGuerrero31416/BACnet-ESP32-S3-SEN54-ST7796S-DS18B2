@@ -56,6 +56,7 @@
 #include "bacnet/basic/npdu/h_npdu.h"
 #include "bacnet/bacenum.h"
 #include "ds18b20.h"
+#include "sensor_service.h"
 
 static const char *TAG = "bacnet";
 
@@ -657,10 +658,13 @@ void app_main(void)
         bacnet_core_task_handle = NULL;
     }
 #endif
-    if (xTaskCreate(sen54_task, "sen54", 4096, NULL, 3, &sen54_task_handle) != pdPASS) {
+
+
+    /*if (xTaskCreate(sen54_task, "sen54", 4096, NULL, 3, &sen54_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create sen54 task");
         sen54_task_handle = NULL;
-    }
+    }*/ //Replaced with the function call below to start the sensor service, which creates the sen54_task internally.
+    ESP_ERROR_CHECK(sensor_service_start(&sen54_task_handle));
 
     if (USER_ENABLE_BACNET_MSTP) {
         ESP_LOGI(TAG, "BACnet MS/TP ready");
@@ -939,12 +943,13 @@ static void bacnet_process_frame_event(const bacnet_event_t *evt)
 /* BO1 GPIO sync: replaces bo1_gpio_sync_task */
 static uint8_t dispatcher_bo1_last_state = BINARY_INACTIVE;
 
-/* SEN54 dispatcher state */
-static bool dispatcher_sen54_initialized = false;
-static int32_t dispatcher_sen54_init_tick_count = -5;  /* Wait 5 seconds before reading */
-static uint32_t dispatcher_sen54_read_tick_count = 0;   /* Read every 2 seconds (2 ticks of 1s) */
+/* SEN54 dispatcher state Removed. Sensor I/O should not be part of BACnet protocol timing */ 
+//static bool dispatcher_sen54_initialized = false;
+//static int32_t dispatcher_sen54_init_tick_count = -5;  /* Wait 5 seconds before reading */
+//static uint32_t dispatcher_sen54_read_tick_count = 0;   /* Read every 2 seconds (2 ticks of 1s) */
 
 static void bacnet_dispatcher_tick_100ms(void)
+
 {
     tsm_timer_milliseconds(100);
 
@@ -968,33 +973,33 @@ static void bacnet_dispatcher_tick_100ms(void)
     dispatcher_bo1_last_state = Binary_Output_Present_Value(USER_BO_INSTANCES[0]);
 }
 
-/* SEN54 dispatcher handler: replaces sen54_task periodic read (every 2 seconds) */
-static void bacnet_dispatcher_sen54_handler(void)
+/* SEN54 dispatcher handler: replaces sen54_task periodic read (every 2 seconds) 
+//static void bacnet_dispatcher_sen54_handler(void)
 {
-    /* Initialize on first call */
+    // Initialize on first call 
     if (!dispatcher_sen54_initialized) {
         if (dispatcher_sen54_init_tick_count < 0) {
             dispatcher_sen54_init_tick_count++;
-            /* After 5 seconds (5 iterations of 1s tick), init the sensor */
+            // After 5 seconds (5 iterations of 1s tick), init the sensor 
             if (dispatcher_sen54_init_tick_count == 0) {
                 sen54_init();
                 dispatcher_sen54_initialized = true;
             }
-            return;  /* Skip reading until init complete */
+            return;  // Skip reading until init complete 
         }
     }
 
-    /* Check BV1 for reset command (every tick) */
+    // Check BV1 for reset command (every tick) 
     if (Binary_Value_Present_Value(1) == BINARY_ACTIVE) {
         ESP_LOGI(TAG, "BV1 ACTIVE: sending SEN54 full reset");
         esp_err_t err = sen54_full_reset();
         ESP_LOGI(TAG, "SEN54 full reset %s", err == ESP_OK ? "OK" : "FAILED");
         Binary_Value_Present_Value_Set(1, BINARY_INACTIVE);
-        dispatcher_sen54_read_tick_count = 0;  /* Reset read timer after reset */
+        dispatcher_sen54_read_tick_count = 0;  // Reset read timer after reset 
         return;
     }
 
-    /* Perform sensor read every 2 seconds (i.e., every 2nd iteration of 1s tick) */
+    // Perform sensor read every 2 seconds (i.e., every 2nd iteration of 1s tick) 
     dispatcher_sen54_read_tick_count++;
     if (dispatcher_sen54_read_tick_count >= 2) {
         dispatcher_sen54_read_tick_count = 0;
@@ -1036,7 +1041,7 @@ static void bacnet_dispatcher_sen54_handler(void)
             Analog_Input_Reliability_Set(8, RELIABILITY_UNRELIABLE_OTHER);
         }
     }
-}
+} */
 
 static void bacnet_dispatcher_tick_1s(void)
 {
@@ -1049,7 +1054,7 @@ static void bacnet_dispatcher_tick_1s(void)
     }
 
     /* SEN54 periodic read handler (replaces sen54_task) */
-    bacnet_dispatcher_sen54_handler();
+    //bacnet_dispatcher_sen54_handler();
 }
 
 static void bacnet_core_task(void *pvParameters)
