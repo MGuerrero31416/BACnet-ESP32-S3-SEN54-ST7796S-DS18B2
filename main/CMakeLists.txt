@@ -1,23 +1,39 @@
 idf_component_register(
     SRCS
-        "binary_output.c"
-        "binary_input.c"
-        "analog_input.c"
-        "binary_value.c"
-        "analog_value.c"
         "main.c"
-        "sensor_service.c"
-        "wifi_helper.c"
-        "display.cpp"
-        "mstp_rs485.c"
-        "User_Settings.c"
-        "bacnet_coordinator.c"
-        "bacnet_event_bus.c"
-        "bacnet_app.c"
-        "app_storage.c"
-        "stack_profiler.c"
-        "app_supervisor.c"
 
+        "app/app_storage.c"
+        "app/app_supervisor.c"
+        "app/sensor_service.c"
+        "app/stack_profiler.c"
+
+        "bacnet/bacnet_app.c"
+        "bacnet/bacnet_coordinator.c"
+        "bacnet/bacnet_event_bus.c"
+
+        "bacnet/objects/analog_input.c"
+        "bacnet/objects/analog_value.c"
+        "bacnet/objects/binary_input.c"
+        "bacnet/objects/binary_output.c"
+        "bacnet/objects/binary_value.c"
+
+        "platform/mstp_rs485.c"
+        "platform/wifi_helper.c"
+
+        "ui/display.cpp"
+
+        "User_Settings.c"
+
+
+    INCLUDE_DIRS
+        "."
+        "app"
+        "bacnet"
+        "bacnet/objects"
+        "platform"
+        "ui"
+        "ui/fonts"
+        
     REQUIRES
         bacnet-stack
         TFT_eSPI
@@ -33,10 +49,6 @@ idf_component_register(
         esp_netif
         driver
         esp_timer
-
-    INCLUDE_DIRS
-        ""
-        "fonts"
 )
 
 # Add linker flags for Arduino log wrapper compatibility
