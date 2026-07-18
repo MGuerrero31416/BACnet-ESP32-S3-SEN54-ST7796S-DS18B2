@@ -10,37 +10,39 @@ static const char *TAG = "stack_profiler";
 typedef struct {
     const char *task_name;
     TaskHandle_t *task_handle;
-    uint32_t configured_stack_words;
-    UBaseType_t last_hwm_words;
-    UBaseType_t min_free_words_observed;
-    UBaseType_t min_free_words_by_event[STACK_EVT_COUNT];
+
+    /* ESP-IDF task stack sizes and high-water marks are in bytes. */
+    uint32_t configured_stack_bytes;
+    UBaseType_t last_hwm_bytes;
+    UBaseType_t min_free_bytes_observed;
+    UBaseType_t min_free_bytes_by_event[STACK_EVT_COUNT];
 } stack_profile_task_t;
 
 static stack_profile_task_t stack_profile_tasks[] = {
     {
         .task_name = "bacnet_rx",
         .task_handle = NULL,
-        .configured_stack_words = 16384,
+        .configured_stack_bytes = 16384,
     },
     {
         .task_name = "bacnet_mstp_rx",
         .task_handle = NULL,
-        .configured_stack_words = 12288,
+        .configured_stack_bytes = 12288,
     },
     {
         .task_name = "bacnet_core",
         .task_handle = NULL,
-        .configured_stack_words = 12288,
+        .configured_stack_bytes = 20480,
     },
     {
         .task_name = "bacnet_cov",
         .task_handle = NULL,
-        .configured_stack_words = 24576,
+        .configured_stack_bytes = 24576,
     },
     {
         .task_name = "sen54",
         .task_handle = NULL,
-        .configured_stack_words = 4096,
+        .configured_stack_bytes = 4096,
     },
 };
 
@@ -81,22 +83,27 @@ static const char *stack_profile_event_name(
 }
 
 static float stack_profile_used_percent(
-    uint32_t configured_words,
-    UBaseType_t min_free_words)
+    uint32_t configured_bytes,
+    UBaseType_t min_free_bytes)
 {
-    if (configured_words == 0) {
+    if (configured_bytes == 0) {
         return 0.0f;
     }
 
-    uint32_t used_words = configured_words;
-
-    if (min_free_words < configured_words) {
-        used_words =
-            configured_words - (uint32_t)min_free_words;
+    /*
+     * Protect against an unexpected high-water value greater than
+     * the configured size. Treat it as zero measured usage rather
+     * than reporting 100%.
+     */
+    if (min_free_bytes >= configured_bytes) {
+        return 0.0f;
     }
 
-    return (100.0f * (float)used_words) /
-           (float)configured_words;
+    uint32_t used_bytes =
+        configured_bytes - (uint32_t)min_free_bytes;
+
+    return (100.0f * (float)used_bytes) /
+           (float)configured_bytes;
 }
 
 void stack_profiler_init(
@@ -123,57 +130,21 @@ void stack_profiler_init(
         task_handles->sensor;
 
     for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
-        stack_profile_tasks[i].last_hwm_words = 0;
-        stack_profile_tasks[i].min_free_words_observed =
+        stack_profile_tasks[i].last_hwm_bytes = 0;
+        stack_profile_tasks[i].min_free_bytes_observed =
             UINT_MAX;
 
         for (int event = 0;
              event < STACK_EVT_COUNT;
              event++) {
             stack_profile_tasks[i]
-                .min_free_words_by_event[event] =
+                .min_free_bytes_by_event[event] =
                 UINT_MAX;
         }
     }
 }
 
-void stack_profiler_sample(
-    stack_profile_event_t event)
-{
-    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
-        if (stack_profile_tasks[i].task_handle == NULL) {
-            continue;
-        }
 
-        TaskHandle_t handle =
-            *stack_profile_tasks[i].task_handle;
-
-        if (handle == NULL) {
-            continue;
-        }
-
-        UBaseType_t hwm =
-            uxTaskGetStackHighWaterMark(handle);
-
-        stack_profile_tasks[i].last_hwm_words = hwm;
-
-        if (hwm <
-            stack_profile_tasks[i]
-                .min_free_words_observed) {
-            stack_profile_tasks[i]
-                .min_free_words_observed = hwm;
-        }
-
-        if (event >= 0 &&
-            event < STACK_EVT_COUNT &&
-            hwm <
-                stack_profile_tasks[i]
-                    .min_free_words_by_event[event]) {
-            stack_profile_tasks[i]
-                .min_free_words_by_event[event] = hwm;
-        }
-    }
-}
 
 void stack_profiler_log_report(void)
 {
@@ -201,38 +172,30 @@ void stack_profiler_log_report(void)
             continue;
         }
 
-        UBaseType_t hwm_now =
+        UBaseType_t hwm_now_bytes =
             uxTaskGetStackHighWaterMark(handle);
 
-        if (hwm_now < entry->min_free_words_observed) {
-            entry->min_free_words_observed = hwm_now;
+        if (hwm_now_bytes <
+            entry->min_free_bytes_observed) {
+            entry->min_free_bytes_observed =
+                hwm_now_bytes;
         }
 
         float used_pct = stack_profile_used_percent(
-            entry->configured_stack_words,
-            entry->min_free_words_observed);
-
-        uint32_t min_free_bytes =
-            (uint32_t)entry->min_free_words_observed *
-            sizeof(StackType_t);
+            entry->configured_stack_bytes,
+            entry->min_free_bytes_observed);
 
         ESP_LOGI(
             TAG,
-            "stack task=%s configured=%lu words (%lu bytes) "
-            "hwm_now=%lu words (%lu bytes) "
-            "min_free_observed=%lu words (%lu bytes) "
+            "stack task=%s configured=%lu bytes "
+            "hwm_now=%lu bytes "
+            "min_free_observed=%lu bytes "
             "used=%.1f%%",
             entry->task_name,
-            (unsigned long)entry->configured_stack_words,
-            (unsigned long)(
-                entry->configured_stack_words *
-                sizeof(StackType_t)),
-            (unsigned long)hwm_now,
-            (unsigned long)(
-                hwm_now * sizeof(StackType_t)),
+            (unsigned long)entry->configured_stack_bytes,
+            (unsigned long)hwm_now_bytes,
             (unsigned long)
-                entry->min_free_words_observed,
-            (unsigned long)min_free_bytes,
+                entry->min_free_bytes_observed,
             used_pct);
     }
 
@@ -248,30 +211,66 @@ void stack_profiler_log_report(void)
             stack_profile_task_t *entry =
                 &stack_profile_tasks[i];
 
-            UBaseType_t min_event =
-                entry->min_free_words_by_event[
+            UBaseType_t min_event_bytes =
+                entry->min_free_bytes_by_event[
                     event_index];
 
-            if (min_event == UINT_MAX) {
+            if (min_event_bytes == UINT_MAX) {
                 continue;
             }
 
             float used_pct =
                 stack_profile_used_percent(
-                    entry->configured_stack_words,
-                    min_event);
+                    entry->configured_stack_bytes,
+                    min_event_bytes);
 
             ESP_LOGI(
                 TAG,
                 "stack_event event=%s task=%s "
-                "min_free=%lu words (%lu bytes) "
-                "used=%.1f%%",
+                "min_free=%lu bytes used=%.1f%%",
                 stack_profile_event_name(event),
                 entry->task_name,
-                (unsigned long)min_event,
-                (unsigned long)(
-                    min_event * sizeof(StackType_t)),
+                (unsigned long)min_event_bytes,
                 used_pct);
+        }
+    }
+}
+
+void stack_profiler_sample(
+    stack_profile_event_t event)
+{
+    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
+        if (stack_profile_tasks[i].task_handle == NULL) {
+            continue;
+        }
+
+        TaskHandle_t handle =
+            *stack_profile_tasks[i].task_handle;
+
+        if (handle == NULL) {
+            continue;
+        }
+
+        UBaseType_t hwm_bytes =
+            uxTaskGetStackHighWaterMark(handle);
+
+        stack_profile_tasks[i].last_hwm_bytes =
+            hwm_bytes;
+
+        if (hwm_bytes <
+            stack_profile_tasks[i].min_free_bytes_observed) {
+            stack_profile_tasks[i].min_free_bytes_observed =
+                hwm_bytes;
+        }
+
+        if (event >= STACK_EVT_NORMAL &&
+            event < STACK_EVT_COUNT &&
+            hwm_bytes <
+                stack_profile_tasks[i]
+                    .min_free_bytes_by_event[event]) {
+            stack_profile_tasks[i]
+                .min_free_bytes_by_event[event] =
+                hwm_bytes;
         }
     }
 }
