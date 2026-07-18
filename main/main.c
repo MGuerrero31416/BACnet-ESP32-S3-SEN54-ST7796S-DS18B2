@@ -15,15 +15,13 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "nvs_flash.h"
 #include "sensor_service.h"
 #include "User_Settings.h"
-
+#include "app_storage.h"
 #include "bacnet/basic/object/ai.h"
 
-static const char *TAG = "bacnet";
 
-int override_nvs_on_flash = 0;  /* Exported for AV/BV modules */
+static const char *TAG = "bacnet";
 
 typedef enum {
     STACK_EVT_NORMAL = 0,
@@ -230,35 +228,17 @@ static void bacnet_profile_callback(bacnet_app_profile_event_t event)
 
 void app_main(void)
 {
-    esp_err_t ret = nvs_flash_init();
+    ESP_ERROR_CHECK(app_storage_init());
 
     stack_profile_init();
 
-    override_nvs_on_flash = USER_OVERRIDE_NVS_ON_FLASH;
-    if (override_nvs_on_flash) {
-        ESP_LOGI(TAG, "Override flag set - erasing NVS to reset to defaults");
-        nvs_flash_erase();
-        ret = nvs_flash_init();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to reinitialize NVS after erase: %d", ret);
-        } else {
-            ESP_LOGI(TAG, "NVS reinitialized successfully");
-        }
-    } else if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGI(TAG, "NVS needs initialization");
-        nvs_flash_erase();
-        nvs_flash_init();
-    } else if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "NVS initialized from existing data");
-    }
-
-    if (bacnet_app_init(bacnet_profile_callback) != ESP_OK) {
-        ESP_LOGE(TAG, "BACnet app initialization failed");
-        return;
-    }
+    ESP_ERROR_CHECK(bacnet_app_init(bacnet_profile_callback));
 
     ESP_LOGI(TAG, "Initializing display");
     display_init();
+
+    /* Remaining task startup and supervisor loop */
+
 
     bacnet_app_task_handle_refs_t task_handles = {
         .bip_rx = &bacnet_rx_task_handle,

@@ -14,6 +14,7 @@ idf_component_register(
         "bacnet_coordinator.c"
         "bacnet_event_bus.c"
         "bacnet_app.c"
+        "app_storage.c"
 
     REQUIRES
         bacnet-stack
