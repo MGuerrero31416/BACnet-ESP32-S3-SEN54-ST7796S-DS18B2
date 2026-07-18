@@ -16,6 +16,7 @@ idf_component_register(
         "bacnet_app.c"
         "app_storage.c"
         "stack_profiler.c"
+        "app_supervisor.c"
 
     REQUIRES
         bacnet-stack
