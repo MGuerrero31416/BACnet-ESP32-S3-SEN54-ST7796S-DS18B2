@@ -1,11 +1,5 @@
 ## Critical change-scope rules
 
-- Make the smallest change required; do not refactor unrelated code.
-- Do not delete, reduce, renumber, or disable BACnet objects unless explicitly requested.
-- Removing a sensor assignment from an AV does not authorize removing the AV.
-- Preserve unaffected object counts, mappings, NVS keys, tasks, GPIOs, and diagnostics.
-- Do not switch branches, restore files, rename folders, or copy code from another project.
-- Fix only errors caused by the requested change; report unrelated errors without modifying them.
 - Do not flash, erase NVS, run fullclean, or delete the build folder unless explicitly requested.
 
 ## Mandatory build environment
