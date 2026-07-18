@@ -1,12 +1,16 @@
 #include "bacnet_app.h"
-
 #include <string.h>
-
 #include "User_Settings.h"
+/* Project object creation functions */
+#include "analog_input.h"
 #include "analog_value.h"
+#include "binary_input.h"
+#include "binary_output.h"
+#include "binary_value.h"
 #include "bacnet/bacaddr.h"
 #include "bacnet/bacenum.h"
 #include "bacnet/basic/bbmd/h_bbmd.h"
+/* BACnet-stack object functions */
 #include "bacnet/basic/object/ai.h"
 #include "bacnet/basic/object/av.h"
 #include "bacnet/basic/object/bi.h"
@@ -31,7 +35,6 @@
 #include "bacnet_event_bus.h"
 #include "bacnet_coordinator.h"
 #include "bacnet_dispatcher_config.h"
-#include "binary_output.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"

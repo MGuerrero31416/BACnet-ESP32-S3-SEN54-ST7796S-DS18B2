@@ -19,6 +19,8 @@
 #include "sensor_service.h"
 #include "User_Settings.h"
 
+#include "bacnet/basic/object/ai.h"
+
 static const char *TAG = "bacnet";
 
 int override_nvs_on_flash = 0;  /* Exported for AV/BV modules */
