@@ -21,13 +21,11 @@
 #include "analog_input.h"
 #include "binary_input.h"
 #include "binary_output.h"
-#include "sen54.h"
 #include "mstp_rs485.h"
 #include "User_Settings.h"
 #include "bacnet_dispatcher_config.h"
 #include "bacnet_coordinator.h"
 #include "bacnet_event_bus.h"
-
 /* bacnet-stack headers */
 #include "bacnet/basic/object/device.h"
 #include "bacnet/basic/object/av.h"
@@ -55,7 +53,6 @@
 #include "bacnet/npdu.h"
 #include "bacnet/basic/npdu/h_npdu.h"
 #include "bacnet/bacenum.h"
-#include "ds18b20.h"
 #include "sensor_service.h"
 
 static const char *TAG = "bacnet";
@@ -67,7 +64,6 @@ static void bacnet_receive_task(void *pvParameters);
 static void bacnet_mstp_receive_task(void *pvParameters);
 static void bacnet_core_task(void *pvParameters);
 static void bacnet_cov_task(void *pvParameters);
-static void sen54_task(void *pvParameters);
 static void bacnet_process_frame_event(const bacnet_event_t *evt);
 static void bacnet_dispatcher_tick_100ms(void);
 static void bacnet_dispatcher_tick_1s(void);
@@ -776,78 +772,6 @@ static void bacnet_cov_task(void *pvParameters)
     }
 }
 
-/* Sensor task - reads SEN54 and DS18B20 data and writes to BACnet objects
- *
- * PERIPHERAL-TO-BACNET MAPPING:
- * - AI1 (instance 1): SEN54 Temperature (°C)
- * - AI2 (instance 2): SEN54 Relative Humidity (%RH)
- * - AI3 (instance 3): SEN54 VOC Index (dimensionless)
- * - AI4 (instance 4): SEN54 PM1.0 (ug/m3)
- * - AI5 (instance 5): SEN54 PM2.5 (ug/m3)
- * - AI6 (instance 6): SEN54 PM4.0 (ug/m3)
- * - AI7 (instance 7): SEN54 PM10 (ug/m3)
- * - AI8 (instance 8): DS18B20 Temperature (°C)
- */
-static void sen54_task(void *pvParameters)
-{
-    (void)pvParameters;
-    float ds18b20_temperature = 0.0f;
-    sen54_data_t sensor_data;
-
-    sen54_init();
-
-    /* Wait for the sensor fan and particle chamber to stabilize */
-    vTaskDelay(pdMS_TO_TICKS(5000));
-
-    while (1) {
-        /* BV1 written ACTIVE triggers a full SEN54 reset (I2C 0xD304) */
-        if (Binary_Value_Present_Value(1) == BINARY_ACTIVE) {
-            ESP_LOGI(TAG, "BV1 ACTIVE: sending SEN54 full reset");
-            esp_err_t err = sen54_full_reset();
-            ESP_LOGI(TAG, "SEN54 full reset %s", err == ESP_OK ? "OK" : "FAILED");
-            Binary_Value_Present_Value_Set(1, BINARY_INACTIVE);
-            continue;
-        }
-
-        stack_profile_sample(STACK_EVT_SEN54_READ);
-        if (sen54_read(&sensor_data)) {
-            Analog_Input_Present_Value_Set(1, sensor_data.temperature);
-            Analog_Input_Present_Value_Set(2, sensor_data.humidity);
-            Analog_Input_Present_Value_Set(3, sensor_data.voc_index);
-            Analog_Input_Present_Value_Set(4, sensor_data.pm1_0);
-            Analog_Input_Present_Value_Set(5, sensor_data.pm2_5);
-            Analog_Input_Present_Value_Set(6, sensor_data.pm4_0);
-            Analog_Input_Present_Value_Set(7, sensor_data.pm10);
-            Analog_Input_Reliability_Set(1, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(2, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(3, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(4, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(5, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(6, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(7, RELIABILITY_NO_FAULT_DETECTED);
-            stack_profile_sample(STACK_EVT_SEN54_READ);
-        } else {
-            Analog_Input_Reliability_Set(1, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(2, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(3, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(4, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(5, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(6, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(7, RELIABILITY_UNRELIABLE_OTHER);
-            stack_profile_sample(STACK_EVT_SEN54_READ);
-        }
-
-        if (ds18b20_read_temperature(&ds18b20_temperature)) {
-            Analog_Input_Present_Value_Set(8, ds18b20_temperature);
-            Analog_Input_Reliability_Set(8, RELIABILITY_NO_FAULT_DETECTED);
-        } else {
-            Analog_Input_Reliability_Set(8, RELIABILITY_UNRELIABLE_OTHER);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-}
-
 static void bacnet_register_with_bbmd(void)
 {
     BACNET_IP_ADDRESS bbmd_addr = { { USER_BBMD_IP_OCTET_1, USER_BBMD_IP_OCTET_2,
@@ -972,76 +896,6 @@ static void bacnet_dispatcher_tick_100ms(void)
     /* BO1 GPIO sync: read present value every 100ms (replaces bo1_gpio_sync_task) */
     dispatcher_bo1_last_state = Binary_Output_Present_Value(USER_BO_INSTANCES[0]);
 }
-
-/* SEN54 dispatcher handler: replaces sen54_task periodic read (every 2 seconds) 
-//static void bacnet_dispatcher_sen54_handler(void)
-{
-    // Initialize on first call 
-    if (!dispatcher_sen54_initialized) {
-        if (dispatcher_sen54_init_tick_count < 0) {
-            dispatcher_sen54_init_tick_count++;
-            // After 5 seconds (5 iterations of 1s tick), init the sensor 
-            if (dispatcher_sen54_init_tick_count == 0) {
-                sen54_init();
-                dispatcher_sen54_initialized = true;
-            }
-            return;  // Skip reading until init complete 
-        }
-    }
-
-    // Check BV1 for reset command (every tick) 
-    if (Binary_Value_Present_Value(1) == BINARY_ACTIVE) {
-        ESP_LOGI(TAG, "BV1 ACTIVE: sending SEN54 full reset");
-        esp_err_t err = sen54_full_reset();
-        ESP_LOGI(TAG, "SEN54 full reset %s", err == ESP_OK ? "OK" : "FAILED");
-        Binary_Value_Present_Value_Set(1, BINARY_INACTIVE);
-        dispatcher_sen54_read_tick_count = 0;  // Reset read timer after reset 
-        return;
-    }
-
-    // Perform sensor read every 2 seconds (i.e., every 2nd iteration of 1s tick) 
-    dispatcher_sen54_read_tick_count++;
-    if (dispatcher_sen54_read_tick_count >= 2) {
-        dispatcher_sen54_read_tick_count = 0;
-        float ds18b20_temperature = 0.0f;
-        sen54_data_t sensor_data;
-
-        stack_profile_sample(STACK_EVT_SEN54_READ);
-        if (sen54_read(&sensor_data)) {
-            Analog_Input_Present_Value_Set(1, sensor_data.temperature);
-            Analog_Input_Present_Value_Set(2, sensor_data.humidity);
-            Analog_Input_Present_Value_Set(3, sensor_data.voc_index);
-            Analog_Input_Present_Value_Set(4, sensor_data.pm1_0);
-            Analog_Input_Present_Value_Set(5, sensor_data.pm2_5);
-            Analog_Input_Present_Value_Set(6, sensor_data.pm4_0);
-            Analog_Input_Present_Value_Set(7, sensor_data.pm10);
-            Analog_Input_Reliability_Set(1, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(2, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(3, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(4, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(5, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(6, RELIABILITY_NO_FAULT_DETECTED);
-            Analog_Input_Reliability_Set(7, RELIABILITY_NO_FAULT_DETECTED);
-            stack_profile_sample(STACK_EVT_SEN54_READ);
-        } else {
-            Analog_Input_Reliability_Set(1, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(2, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(3, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(4, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(5, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(6, RELIABILITY_UNRELIABLE_OTHER);
-            Analog_Input_Reliability_Set(7, RELIABILITY_UNRELIABLE_OTHER);
-            stack_profile_sample(STACK_EVT_SEN54_READ);
-        }
-
-        if (ds18b20_read_temperature(&ds18b20_temperature)) {
-            Analog_Input_Present_Value_Set(8, ds18b20_temperature);
-            Analog_Input_Reliability_Set(8, RELIABILITY_NO_FAULT_DETECTED);
-        } else {
-            Analog_Input_Reliability_Set(8, RELIABILITY_UNRELIABLE_OTHER);
-        }
-    }
-} */
 
 static void bacnet_dispatcher_tick_1s(void)
 {
