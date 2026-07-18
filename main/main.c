@@ -1,24 +1,32 @@
-/* Minimal example: connect to Wi-Fi and initialize BACnet. */
-#include <limits.h>
+/*
+ * Standard C library
+ */
 #include <stddef.h>
-#include <stdio.h>
-#include <string.h>
 
-#include "analog_input.h"
-#include "analog_value.h"
-#include "bacnet_app.h"
-#include "binary_input.h"
-#include "binary_output.h"
-#include "binary_value.h"
-#include "display.h"
+/*
+ * ESP-IDF error handling and logging
+ */
 #include "esp_err.h"
 #include "esp_log.h"
+
+/*
+ * FreeRTOS task types
+ *
+ * Required for TaskHandle_t variables used to track the BACnet
+ * and sensor tasks.
+ */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "sensor_service.h"
-#include "app_storage.h"
-#include "stack_profiler.h"
-#include "app_supervisor.h"
+
+/*
+ * Application services
+ */
+#include "app_storage.h"      /* Initialize NVS and persistence policy */
+#include "app_supervisor.h"   /* Run periodic display/status maintenance */
+#include "bacnet_app.h"       /* Initialize and start the BACnet runtime */
+#include "display.h"          /* Initialize the physical display */
+#include "sensor_service.h"   /* Start SEN54 and DS18B20 measurements */
+#include "stack_profiler.h"   /* Monitor FreeRTOS task stack usage */
 
 static const char *TAG = "bacnet";
 
