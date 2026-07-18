@@ -18,22 +18,11 @@
 #include "sensor_service.h"
 #include "User_Settings.h"
 #include "app_storage.h"
+#include "stack_profiler.h"
 #include "bacnet/basic/object/ai.h"
 
 
 static const char *TAG = "bacnet";
-
-typedef enum {
-    STACK_EVT_NORMAL = 0,
-    STACK_EVT_BACNET_IP_RX,
-    STACK_EVT_MSTP_RX,
-    STACK_EVT_READ_PROPERTY,
-    STACK_EVT_WRITE_PROPERTY,
-    STACK_EVT_COV_NOTIFICATION,
-    STACK_EVT_DISPLAY_UPDATE,
-    STACK_EVT_SEN54_READ,
-    STACK_EVT_COUNT
-} stack_profile_event_t;
 
 
 static TaskHandle_t bacnet_rx_task_handle = NULL;
@@ -43,69 +32,25 @@ static TaskHandle_t bacnet_cov_task_handle = NULL;
 static TaskHandle_t sen54_task_handle = NULL;
 
 
-
-static void stack_profile_init(void)
-{
-    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
-        stack_profile_tasks[i].last_hwm_words = 0;
-        stack_profile_tasks[i].min_free_words_observed = UINT_MAX;
-        for (int e = 0; e < STACK_EVT_COUNT; e++) {
-            stack_profile_tasks[i].min_free_words_by_event[e] = UINT_MAX;
-        }
-    }
-}
-
-static void stack_profile_sample(stack_profile_event_t event)
-{
-    for (int i = 0; i < STACK_PROFILE_TASK_COUNT; i++) {
-        TaskHandle_t handle = *stack_profile_tasks[i].task_handle;
-        if (!handle) {
-            continue;
-        }
-
-        UBaseType_t hwm = uxTaskGetStackHighWaterMark(handle);
-        stack_profile_tasks[i].last_hwm_words = hwm;
-        if (hwm < stack_profile_tasks[i].min_free_words_observed) {
-            stack_profile_tasks[i].min_free_words_observed = hwm;
-        }
-        if (event >= 0 && event < STACK_EVT_COUNT &&
-            hwm < stack_profile_tasks[i].min_free_words_by_event[event]) {
-            stack_profile_tasks[i].min_free_words_by_event[event] = hwm;
-        }
-    }
-}
-
-
-static void bacnet_profile_callback(bacnet_app_profile_event_t event)
-{
-    switch (event) {
-        case BACNET_APP_PROFILE_BIP_RX:
-            stack_profile_sample(STACK_EVT_BACNET_IP_RX);
-            break;
-        case BACNET_APP_PROFILE_MSTP_RX:
-            stack_profile_sample(STACK_EVT_MSTP_RX);
-            break;
-        case BACNET_APP_PROFILE_READ_PROPERTY:
-            stack_profile_sample(STACK_EVT_READ_PROPERTY);
-            break;
-        case BACNET_APP_PROFILE_WRITE_PROPERTY:
-            stack_profile_sample(STACK_EVT_WRITE_PROPERTY);
-            break;
-        case BACNET_APP_PROFILE_COV_NOTIFICATION:
-            stack_profile_sample(STACK_EVT_COV_NOTIFICATION);
-            break;
-        default:
-            break;
-    }
-}
-
 void app_main(void)
 {
     ESP_ERROR_CHECK(app_storage_init());
 
-    stack_profile_init();
+            const stack_profiler_task_handle_refs_t
+                profiler_task_handles = {
+                    .bacnet_rx = &bacnet_rx_task_handle,
+                    .bacnet_mstp_rx =
+                        &bacnet_mstp_rx_task_handle,
+                    .bacnet_core = &bacnet_core_task_handle,
+                    .bacnet_cov = &bacnet_cov_task_handle,
+                    .sensor = &sen54_task_handle,
+                };
 
-    ESP_ERROR_CHECK(bacnet_app_init(bacnet_profile_callback));
+            stack_profiler_init(&profiler_task_handles);
+
+            ESP_ERROR_CHECK(
+                bacnet_app_init(
+                    stack_profiler_bacnet_callback));
 
     ESP_LOGI(TAG, "Initializing display");
     display_init();
@@ -135,7 +80,7 @@ void app_main(void)
     uint32_t stack_report_tick = 0;
     while (1) {
         bacnet_app_maintenance_1s();
-        stack_profile_sample(STACK_EVT_NORMAL);
+        stack_profiler_sample(STACK_EVT_NORMAL);
 
         uint32_t mstp_pdu_count = bacnet_app_get_mstp_pdu_count();
         if (USER_ENABLE_BACNET_MSTP) {
@@ -160,7 +105,7 @@ void app_main(void)
             float ai5_pm25 = Analog_Input_Present_Value(5);
             float ai8_ds18b20_temp = Analog_Input_Present_Value(8);
 
-            stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
+            stack_profiler_sample(STACK_EVT_DISPLAY_UPDATE);
 
             display_update_values(
                 ai5_pm25,
@@ -169,7 +114,7 @@ void app_main(void)
                 ai3_voc,
                 ai8_ds18b20_temp);
 
-            stack_profile_sample(STACK_EVT_DISPLAY_UPDATE);
+            stack_profiler_sample(STACK_EVT_DISPLAY_UPDATE);
         }
 
         if (++stack_report_tick % 30 == 0) {

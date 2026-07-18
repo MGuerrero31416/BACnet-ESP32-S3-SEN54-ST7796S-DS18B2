@@ -108,7 +108,7 @@ static void sensor_service_task(void *parameter)
                     RELIABILITY_NO_FAULT_DETECTED);
             }
 
-            ESP_LOGI(
+            ESP_LOGD(
                 TAG,
                 "SEN54: T=%.2f C RH=%.2f %% VOC=%.1f "
                 "PM1=%.1f PM2.5=%.1f PM4=%.1f PM10=%.1f",
@@ -141,7 +141,7 @@ static void sensor_service_task(void *parameter)
                 8,
                 RELIABILITY_NO_FAULT_DETECTED);
 
-            ESP_LOGI(
+            ESP_LOGD(
                 TAG,
                 "DS18B20: T=%.2f C",
                 ds18b20_temperature);
