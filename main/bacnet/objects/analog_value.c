@@ -5,6 +5,7 @@
 #include "nvs_flash.h"
 #include "User_Settings.h"
 #include <stdbool.h>
+#include "app_storage.h"
 
 /* bacnet-stack headers */
 #include "bacnet/basic/object/av.h"
@@ -32,8 +33,6 @@ static bool av_find_config_index(
     return false;
 }
 
-/* Override NVS values with code defaults - set in main config */
-extern int override_nvs_on_flash;
 
 void bacnet_nvs_save_av_name(uint32_t instance, const char *name, uint16_t length) {
     nvs_handle_t nvs_handle;
@@ -192,7 +191,7 @@ void bacnet_create_analog_values(void) {
         Analog_Value_Reliability_Set(instance, RELIABILITY_NO_FAULT_DETECTED);
         Analog_Value_Out_Of_Service_Set(instance, false);
         /* Load persisted values from NVS (if any) - unless override flag is set */
-        if (!override_nvs_on_flash) {
+        if (!app_storage_override_enabled()) {
             bacnet_nvs_load_av(instance);
         }
     }

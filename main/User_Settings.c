@@ -14,7 +14,7 @@ const char USER_WIFI_STATIC_IP_NETMASK[] = "255.255.255.0";
 /* BACnet device settings */
 const char USER_BACNET_DEVICE_NAME[] = "ESP32-S3_55502";
 const uint32_t USER_BACNET_DEVICE_INSTANCE = 55502;
-const int USER_OVERRIDE_NVS_ON_FLASH = 0;
+const int USER_OVERRIDE_NVS_ON_FLASH = 0; // 0 = use NVS on flash, 1 = override NVS on flash with settings in this file
 
 /* BBMD foreign device registration */
 const uint8_t USER_BBMD_IP_OCTET_1 = 192;
@@ -175,7 +175,7 @@ const char *USER_AI_DESCRIPTIONS[USER_AI_COUNT] = {
     "SEN54 PM2.5",
     "SEN54 PM4.0",
     "SEN54 PM10",
-    "DS18B20 Temperature"
+    "DS18B20 Temp sensor"
 };
 const uint16_t USER_AI_UNITS[USER_AI_COUNT] = {
     UNITS_DEGREES_CELSIUS,

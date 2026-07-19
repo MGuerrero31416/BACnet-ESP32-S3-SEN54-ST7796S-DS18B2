@@ -4,15 +4,13 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "User_Settings.h"
+#include "app_storage.h"
 
 /* bacnet-stack headers */
 #include "bacnet/basic/object/bi.h"
 
 static const char *TAG = "bacnet_bi";
 #define NVS_NAMESPACE "bacnet"
-
-/* Override NVS values with code defaults - set in main config */
-extern int override_nvs_on_flash;
 
 void bacnet_nvs_save_bi_name(uint32_t instance, const char *name, uint16_t length) {
     nvs_handle_t nvs_handle;
@@ -135,7 +133,7 @@ void bacnet_create_binary_inputs(void) {
         Binary_Input_Reliability_Set(instance, RELIABILITY_NO_FAULT_DETECTED);
         Binary_Input_Out_Of_Service_Set(instance, false);
         /* Load persisted values from NVS (if any) - unless override flag is set */
-        if (!override_nvs_on_flash) {
+        if (!app_storage_override_enabled()) {
             bacnet_nvs_load_bi(instance);
         }
     }
