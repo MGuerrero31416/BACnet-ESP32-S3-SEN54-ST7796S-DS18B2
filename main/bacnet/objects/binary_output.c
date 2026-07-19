@@ -94,8 +94,8 @@ void bacnet_nvs_save_bo_pv(uint32_t instance, uint8_t value) {
 void bacnet_nvs_load_bo(uint32_t instance) {
     nvs_handle_t nvs_handle;
     char key[32];
-    static char bo_names[4][65];  /* Persistent storage for loaded names */
-    static char bo_descs[4][129];  /* Persistent storage for loaded descriptions */
+    static char bo_names[USER_BO_COUNT][65];  /* Persistent storage for loaded names */
+    static char bo_descs[USER_BO_COUNT][129];  /* Persistent storage for loaded descriptions */
     uint8_t idx = (instance > 0 && instance <= 4) ? (instance - 1) : 0;
     uint8_t pv = BINARY_INACTIVE;
     size_t len;

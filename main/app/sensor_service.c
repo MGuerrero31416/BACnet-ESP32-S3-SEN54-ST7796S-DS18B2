@@ -1,29 +1,131 @@
 #include "sensor_service.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "esp_err.h"
 #include "esp_log.h"
 
-#include "sen54.h"
-#include "ds18b20.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
+#include "User_Settings.h"
+#include "ds18b20.h"
+#include "sen54.h"
+
+/* BACnet-stack headers */
+#include "bacnet/bacenum.h"
 #include "bacnet/basic/object/ai.h"
 #include "bacnet/basic/object/bv.h"
-#include "bacnet/bacenum.h"
 
 static const char *TAG = "sensor_service";
 
+
 /*
- * Sensor-to-BACnet mapping:
+ * Logical positions in USER_AI_INSTANCES[].
  *
- * AI1 = SEN54 temperature
- * AI2 = SEN54 relative humidity
- * AI3 = SEN54 VOC index
- * AI4 = SEN54 PM1.0
- * AI5 = SEN54 PM2.5
- * AI6 = SEN54 PM4.0
- * AI7 = SEN54 PM10
- * AI8 = DS18B20 temperature
+ * These values are array indexes, not BACnet object instance numbers.
+ * The actual BACnet instances are read from USER_AI_INSTANCES[].
+ */
+typedef enum {
+    SENSOR_AI_SEN54_TEMPERATURE = 0,
+    SENSOR_AI_SEN54_HUMIDITY,
+    SENSOR_AI_SEN54_VOC_INDEX,
+    SENSOR_AI_SEN54_PM1_0,
+    SENSOR_AI_SEN54_PM2_5,
+    SENSOR_AI_SEN54_PM4_0,
+    SENSOR_AI_SEN54_PM10,
+    SENSOR_AI_DS18B20_TEMPERATURE
+} sensor_ai_role_t;
+
+
+/*
+ * Logical positions in USER_BV_INSTANCES[].
+ */
+typedef enum {
+    SENSOR_BV_SEN54_FULL_RESET = 0
+} sensor_bv_role_t;
+
+
+/*
+ * Ensure User_Settings contains enough configured objects for the
+ * sensor mappings used by this service.
+ */
+_Static_assert(
+    USER_AI_COUNT > SENSOR_AI_DS18B20_TEMPERATURE,
+    "USER_AI_COUNT must provide eight sensor Analog Inputs");
+
+_Static_assert(
+    USER_BV_COUNT > SENSOR_BV_SEN54_FULL_RESET,
+    "USER_BV_COUNT must provide the SEN54 reset Binary Value");
+
+
+/*
+ * Return the configured BACnet Analog Input instance associated with
+ * a logical sensor role.
+ */
+static uint32_t sensor_ai_instance(
+    sensor_ai_role_t role)
+{
+    return USER_AI_INSTANCES[(size_t)role];
+}
+
+
+/*
+ * Return the configured BACnet Binary Value instance associated with
+ * a logical sensor-control role.
+ */
+static uint32_t sensor_bv_instance(
+    sensor_bv_role_t role)
+{
+    return USER_BV_INSTANCES[(size_t)role];
+}
+
+
+/*
+ * Apply the same reliability state to all seven SEN54 Analog Inputs.
+ */
+static void sensor_service_set_sen54_reliability(
+    BACNET_RELIABILITY reliability)
+{
+    static const sensor_ai_role_t sen54_roles[] = {
+        SENSOR_AI_SEN54_TEMPERATURE,
+        SENSOR_AI_SEN54_HUMIDITY,
+        SENSOR_AI_SEN54_VOC_INDEX,
+        SENSOR_AI_SEN54_PM1_0,
+        SENSOR_AI_SEN54_PM2_5,
+        SENSOR_AI_SEN54_PM4_0,
+        SENSOR_AI_SEN54_PM10
+    };
+
+    const size_t role_count =
+        sizeof(sen54_roles) /
+        sizeof(sen54_roles[0]);
+
+    for (size_t i = 0; i < role_count; i++) {
+        Analog_Input_Reliability_Set(
+            sensor_ai_instance(sen54_roles[i]),
+            reliability);
+    }
+}
+
+
+/*
+ * Sensor acquisition task.
  *
- * BV1 ACTIVE = SEN54 full reset
+ * BACnet mapping is controlled by the object instance arrays in
+ * User_Settings.c:
+ *
+ * USER_AI_INSTANCES[0] = SEN54 temperature
+ * USER_AI_INSTANCES[1] = SEN54 relative humidity
+ * USER_AI_INSTANCES[2] = SEN54 VOC index
+ * USER_AI_INSTANCES[3] = SEN54 PM1.0
+ * USER_AI_INSTANCES[4] = SEN54 PM2.5
+ * USER_AI_INSTANCES[5] = SEN54 PM4.0
+ * USER_AI_INSTANCES[6] = SEN54 PM10
+ * USER_AI_INSTANCES[7] = DS18B20 temperature
+ *
+ * USER_BV_INSTANCES[0] = SEN54 full-reset command
  */
 static void sensor_service_task(void *parameter)
 {
@@ -32,13 +134,21 @@ static void sensor_service_task(void *parameter)
     float ds18b20_temperature = 0.0f;
     sen54_data_t sensor_data;
 
+    const uint32_t sen54_reset_bv =
+        sensor_bv_instance(
+            SENSOR_BV_SEN54_FULL_RESET);
+
+    const uint32_t ds18b20_ai =
+        sensor_ai_instance(
+            SENSOR_AI_DS18B20_TEMPERATURE);
+
     ESP_LOGI(TAG, "Sensor service task started");
     ESP_LOGI(TAG, "Initializing SEN54");
 
     sen54_init();
 
     /*
-     * Allow the SEN54 fan and particle chamber to stabilize
+     * Allow the SEN54 fan and measurement chamber to stabilize
      * before requesting the first measurement.
      */
     vTaskDelay(pdMS_TO_TICKS(5000));
@@ -47,10 +157,15 @@ static void sensor_service_task(void *parameter)
 
     for (;;) {
         /*
-         * BV1 written ACTIVE triggers a full SEN54 reset.
+         * Writing ACTIVE to the configured reset BV triggers a full
+         * SEN54 reset. The BV returns automatically to INACTIVE.
          */
-        if (Binary_Value_Present_Value(1) == BINARY_ACTIVE) {
-            ESP_LOGI(TAG, "BV1 ACTIVE: sending SEN54 full reset");
+        if (Binary_Value_Present_Value(
+                sen54_reset_bv) == BINARY_ACTIVE) {
+            ESP_LOGI(
+                TAG,
+                "BV%lu ACTIVE: sending SEN54 full reset",
+                (unsigned long)sen54_reset_bv);
 
             esp_err_t err = sen54_full_reset();
 
@@ -60,54 +175,63 @@ static void sensor_service_task(void *parameter)
                 err == ESP_OK ? "OK" : "FAILED");
 
             Binary_Value_Present_Value_Set(
-                1,
+                sen54_reset_bv,
                 BINARY_INACTIVE);
 
             /*
-             * Give the sensor time before the next normal read.
+             * Give the sensor time to recover before the next
+             * normal measurement.
              */
             vTaskDelay(pdMS_TO_TICKS(2000));
             continue;
         }
 
         /*
-         * Read SEN54 and update AI1-AI7.
+         * Read the SEN54 and update its configured BACnet AIs.
          */
         if (sen54_read(&sensor_data)) {
             Analog_Input_Present_Value_Set(
-                1,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_TEMPERATURE),
                 sensor_data.temperature);
 
             Analog_Input_Present_Value_Set(
-                2,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_HUMIDITY),
                 sensor_data.humidity);
 
             Analog_Input_Present_Value_Set(
-                3,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_VOC_INDEX),
                 sensor_data.voc_index);
 
             Analog_Input_Present_Value_Set(
-                4,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_PM1_0),
                 sensor_data.pm1_0);
 
             Analog_Input_Present_Value_Set(
-                5,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_PM2_5),
                 sensor_data.pm2_5);
 
             Analog_Input_Present_Value_Set(
-                6,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_PM4_0),
                 sensor_data.pm4_0);
 
             Analog_Input_Present_Value_Set(
-                7,
+                sensor_ai_instance(
+                    SENSOR_AI_SEN54_PM10),
                 sensor_data.pm10);
 
-            for (uint32_t instance = 1; instance <= 7; instance++) {
-                Analog_Input_Reliability_Set(
-                    instance,
-                    RELIABILITY_NO_FAULT_DETECTED);
-            }
+            sensor_service_set_sen54_reliability(
+                RELIABILITY_NO_FAULT_DETECTED);
 
+            /*
+             * Debug-level measurement log. It remains hidden when
+             * the normal ESP-IDF log level is INFO.
+             */
             ESP_LOGD(
                 TAG,
                 "SEN54: T=%.2f C RH=%.2f %% VOC=%.1f "
@@ -120,25 +244,23 @@ static void sensor_service_task(void *parameter)
                 sensor_data.pm4_0,
                 sensor_data.pm10);
         } else {
-            for (uint32_t instance = 1; instance <= 7; instance++) {
-                Analog_Input_Reliability_Set(
-                    instance,
-                    RELIABILITY_UNRELIABLE_OTHER);
-            }
+            sensor_service_set_sen54_reliability(
+                RELIABILITY_UNRELIABLE_OTHER);
 
             ESP_LOGW(TAG, "SEN54 read failed");
         }
 
         /*
-         * Read DS18B20 and update AI8.
+         * Read the DS18B20 and update its configured BACnet AI.
          */
-        if (ds18b20_read_temperature(&ds18b20_temperature)) {
+        if (ds18b20_read_temperature(
+                &ds18b20_temperature)) {
             Analog_Input_Present_Value_Set(
-                8,
+                ds18b20_ai,
                 ds18b20_temperature);
 
             Analog_Input_Reliability_Set(
-                8,
+                ds18b20_ai,
                 RELIABILITY_NO_FAULT_DETECTED);
 
             ESP_LOGD(
@@ -147,7 +269,7 @@ static void sensor_service_task(void *parameter)
                 ds18b20_temperature);
         } else {
             Analog_Input_Reliability_Set(
-                8,
+                ds18b20_ai,
                 RELIABILITY_UNRELIABLE_OTHER);
 
             ESP_LOGW(TAG, "DS18B20 read failed");
@@ -157,9 +279,15 @@ static void sensor_service_task(void *parameter)
     }
 }
 
-esp_err_t sensor_service_start(TaskHandle_t *task_handle)
+
+esp_err_t sensor_service_start(
+    TaskHandle_t *task_handle)
 {
     if (task_handle == NULL) {
+        ESP_LOGE(
+            TAG,
+            "Sensor task-handle reference is NULL");
+
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -173,7 +301,11 @@ esp_err_t sensor_service_start(TaskHandle_t *task_handle)
 
     if (result != pdPASS) {
         *task_handle = NULL;
-        ESP_LOGE(TAG, "Failed to create sensor task");
+
+        ESP_LOGE(
+            TAG,
+            "Failed to create sensor task");
+
         return ESP_ERR_NO_MEM;
     }
 

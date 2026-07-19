@@ -2,6 +2,7 @@
 #define USER_SETTINGS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* WiFi settings */
@@ -40,6 +41,31 @@ extern const uint32_t USER_MSTP_BAUD_RATE;
 #define USER_BI_COUNT 4
 #define USER_BO_COUNT 4
 
+/*
+ * Logical positions in the USER_AI_* parallel arrays.
+ *
+ * These are array indexes, not BACnet object instance numbers.
+ * The actual instance numbers come from USER_AI_INSTANCES[].
+ */
+typedef enum {
+    USER_AI_SEN54_TEMPERATURE = 0,
+    USER_AI_SEN54_HUMIDITY,
+    USER_AI_SEN54_VOC_INDEX,
+    USER_AI_SEN54_PM1_0,
+    USER_AI_SEN54_PM2_5,
+    USER_AI_SEN54_PM4_0,
+    USER_AI_SEN54_PM10,
+    USER_AI_DS18B20_TEMPERATURE
+} user_ai_role_t;
+
+/*
+ * Logical positions in the USER_BV_* parallel arrays.
+ */
+typedef enum {
+    USER_BV_SEN54_FULL_RESET = 0
+} user_bv_role_t;
+
+
 extern const uint32_t USER_AV_INSTANCES[USER_AV_COUNT];
 extern const char *USER_AV_NAMES[USER_AV_COUNT];
 extern const char *USER_AV_DESCRIPTIONS[USER_AV_COUNT];
@@ -74,5 +100,17 @@ extern const char *USER_BO_DESCRIPTIONS[USER_BO_COUNT];
 extern const char *USER_BO_ACTIVE_TEXT[USER_BO_COUNT];
 extern const char *USER_BO_INACTIVE_TEXT[USER_BO_COUNT];
 extern const uint8_t USER_BO_INITIAL_VALUES[USER_BO_COUNT];
+
+static inline uint32_t user_ai_instance(
+    user_ai_role_t role)
+{
+    return USER_AI_INSTANCES[(size_t)role];
+}
+
+static inline uint32_t user_bv_instance(
+    user_bv_role_t role)
+{
+    return USER_BV_INSTANCES[(size_t)role];
+}
 
 #endif /* USER_SETTINGS_H */

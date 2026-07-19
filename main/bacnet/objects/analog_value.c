@@ -4,12 +4,33 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "User_Settings.h"
+#include <stdbool.h>
 
 /* bacnet-stack headers */
 #include "bacnet/basic/object/av.h"
 
 static const char *TAG = "bacnet_av";
 #define NVS_NAMESPACE "bacnet"
+
+static bool av_find_config_index(
+    uint32_t instance,
+    size_t *index)
+{
+    if (index == NULL) {
+        return false;
+    }
+
+    for (size_t i = 0;
+         i < USER_AV_COUNT;
+         i++) {
+        if (USER_AV_INSTANCES[i] == instance) {
+            *index = i;
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /* Override NVS values with code defaults - set in main config */
 extern int override_nvs_on_flash;
@@ -113,7 +134,15 @@ void bacnet_nvs_load_av(uint32_t instance) {
     char key[32];
     static char av_names[USER_AV_COUNT][65];  /* Persistent storage for loaded names */
     static char av_descs[USER_AV_COUNT][129];  /* Persistent storage for loaded descriptions */
-    uint8_t idx = (instance > 0 && instance <= USER_AV_COUNT) ? (instance - 1) : 0;
+   size_t idx;
+
+                if (!av_find_config_index(instance, &idx)) {
+                    ESP_LOGE(
+                        TAG,
+                        "AV%lu is not configured",
+                        (unsigned long)instance);
+                    return;
+                }
     uint16_t units = UNITS_PERCENT;
     float pv = 0.0f;
     size_t len;

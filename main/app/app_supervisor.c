@@ -62,30 +62,40 @@ void app_supervisor_run(void)
          * Update displayed sensor values every two seconds.
          */
         if (++display_tick % 2 == 0) {
-            float ai1_temp =
-                Analog_Input_Present_Value(1);
+                float sen54_temperature =
+                    Analog_Input_Present_Value(
+                        user_ai_instance(
+                            USER_AI_SEN54_TEMPERATURE));
 
-            float ai2_humidity =
-                Analog_Input_Present_Value(2);
+                float sen54_humidity =
+                    Analog_Input_Present_Value(
+                        user_ai_instance(
+                            USER_AI_SEN54_HUMIDITY));
 
-            float ai3_voc =
-                Analog_Input_Present_Value(3);
+                float sen54_voc =
+                    Analog_Input_Present_Value(
+                        user_ai_instance(
+                            USER_AI_SEN54_VOC_INDEX));
 
-            float ai5_pm25 =
-                Analog_Input_Present_Value(5);
+                float sen54_pm25 =
+                    Analog_Input_Present_Value(
+                        user_ai_instance(
+                            USER_AI_SEN54_PM2_5));
 
-            float ai8_ds18b20_temp =
-                Analog_Input_Present_Value(8);
+                float ds18b20_temperature =
+                    Analog_Input_Present_Value(
+                        user_ai_instance(
+                            USER_AI_DS18B20_TEMPERATURE));
 
             stack_profiler_sample(
                 STACK_EVT_DISPLAY_UPDATE);
 
             display_update_values(
-                ai5_pm25,
-                ai1_temp,
-                ai2_humidity,
-                ai3_voc,
-                ai8_ds18b20_temp);
+                sen54_pm25,
+                sen54_temperature,
+                sen54_humidity,
+                sen54_voc,
+                ds18b20_temperature);
 
             stack_profiler_sample(
                 STACK_EVT_DISPLAY_UPDATE);
