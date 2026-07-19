@@ -700,9 +700,9 @@ void bacnet_create_analog_inputs(void)
          * Override compiled defaults with persisted values unless the
          * application was configured to erase and reset NVS.
          */
-        if (!override_nvs_on_flash) {
-            bacnet_nvs_load_ai(instance);
-        }
+            if (!app_storage_override_enabled()) {
+                bacnet_nvs_load_ai(instance);
+            }
     }
 
     ESP_LOGI(
