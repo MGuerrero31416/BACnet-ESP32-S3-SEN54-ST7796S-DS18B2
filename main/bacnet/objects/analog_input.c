@@ -132,6 +132,7 @@ void bacnet_create_analog_inputs(void) {
         Analog_Input_Description_Set(instance, USER_AI_DESCRIPTIONS[i]);
         Analog_Input_Units_Set(instance, USER_AI_UNITS[i]);
         Analog_Input_Present_Value_Set(instance, USER_AI_INITIAL_VALUES[i]);
+        Analog_Input_COV_Increment_Set(instance, USER_AI_COV_INCREMENTS[i]);
         Analog_Input_Reliability_Set(instance, RELIABILITY_NO_FAULT_DETECTED);
         Analog_Input_Out_Of_Service_Set(instance, false);
         /* Load persisted values from NVS (if any) - unless override flag is set */
