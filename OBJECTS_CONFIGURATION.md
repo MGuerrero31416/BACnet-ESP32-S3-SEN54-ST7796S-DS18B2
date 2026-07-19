@@ -1,174 +1,168 @@
-## BACnet Objects Configuration Guide
+# BACnet Objects Configuration
 
-This project now includes 20 BACnet objects across 5 types:
+This repository currently exposes 36 BACnet objects across 5 object types.
 
-### Object Types Summary
+## Object Counts
 
-| Type | Instances | Access | Description |
-|------|-----------|--------|-------------|
-| **Analog Values (AV)** | AV1-AV4 | R/W | External analog values (e.g., PM2.5 sensor) |
-| **Binary Values (BV)** | BV1-BV4 | R/W | External binary states (e.g., sensors) |
-| **Analog Inputs (AI)** | AI1-AI4 | Read-only | Read-only analog sensor inputs |
-| **Binary Inputs (BI)** | BI1-BI4 | Read-only | Read-only binary sensor states |
-| **Binary Outputs (BO)** | BO1-BO4 | R/W | Writable binary outputs (e.g., relay control) |
+The counts are defined in `main/User_Settings.h`:
 
-### Configuration Locations
+| Type | Count | Default slots |
+|------|-------|---------------|
+| Analog Values | 16 | `AV1`-`AV16` |
+| Binary Values | 4 | `BV1`-`BV4` |
+| Analog Inputs | 8 | `AI1`-`AI8` |
+| Binary Inputs | 4 | `BI1`-`BI4` |
+| Binary Outputs | 4 | `BO1`-`BO4` |
 
-#### Analog Values (AV1-AV4)
-- **File**: `main/analog_value.c`
-- **Configuration Section**: Lines 17-56 (marked as `ANALOG VALUE CONFIGURATION`)
-- **Customizable**:
-  - Names (AV_NAMES)
-  - Descriptions (AV_DESCRIPTIONS)
-  - Units (AV_UNITS)
-  - COV increments (AV_COV_INCREMENTS)
-  - Initial values (AV_INITIAL_VALUES)
+Total: `16 + 4 + 8 + 4 + 4 = 36`
 
-#### Binary Values (BV1-BV4)
-- **File**: `main/binary_value.c`
-- **Configuration Section**: Lines 16-50 (marked as `BINARY VALUE CONFIGURATION`)
-- **Customizable**:
-  - Names (BV_NAMES)
-  - Descriptions (BV_DESCRIPTIONS)
-  - Active/Inactive text (BV_ACTIVE_TEXT, BV_INACTIVE_TEXT)
-  - Initial values (BV_INITIAL_VALUES)
+## Configuration Sources
 
-#### Analog Inputs (AI1-AI4)
-- **File**: `main/analog_input.c`
-- **Configuration Section**: Lines 15-59 (marked as `ANALOG INPUT CONFIGURATION`)
-- **Customizable**:
-  - Names (AI_NAMES)
-  - Descriptions (AI_DESCRIPTIONS)
-  - Units (AI_UNITS)
-  - COV increments (AI_COV_INCREMENTS)
-  - Initial values (AI_INITIAL_VALUES)
+### Central User Configuration
 
-#### Binary Inputs (BI1-BI4)
-- **File**: `main/binary_input.c`
-- **Configuration Section**: Lines 14-56 (marked as `BINARY INPUT CONFIGURATION`)
-- **Customizable**:
-  - Names (BI_NAMES)
-  - Descriptions (BI_DESCRIPTIONS)
-  - Active/Inactive text (BI_ACTIVE_TEXT, BI_INACTIVE_TEXT)
-  - Initial values (BI_INITIAL_VALUES)
+`main/User_Settings.h` defines:
 
-#### Binary Outputs (BO1-BO4)
-- **File**: `main/binary_output.c`
-- **Configuration Section**: Lines 14-56 (marked as `BINARY OUTPUT CONFIGURATION`)
-- **Customizable**:
-  - Names (BO_NAMES)
-  - Descriptions (BO_DESCRIPTIONS)
-  - Active/Inactive text (BO_ACTIVE_TEXT, BO_INACTIVE_TEXT)
-  - Initial values (BO_INITIAL_VALUES)
+- object counts
+- logical AI role identifiers
+- logical BV role identifiers
 
-### Features
+`main/User_Settings.c` defines:
 
-#### Change of Value (COV)
-All objects support BACnet COV notifications:
-- Analog objects notify on changes exceeding the COV increment
-- Binary objects notify on any state change
-- Uses existing `bacnet_cov_task` infrastructure
-- No additional configuration needed
+- BACnet instance arrays for every object type
+- names
+- descriptions
+- units
+- initial values
+- active/inactive text for binary objects
+- COV increments for analog objects
 
-#### Non-Volatile Storage (NVS)
-All objects persist their configuration:
-- Names and descriptions survive power cycles
-- Values can be written via BACnet Write Property
-- Auto-loaded on startup (unless OVERRIDE_NVS_ON_FLASH=1)
-- Approximately 6-8 KB of the 64 KB NVS partition used
+The object modules consume those arrays at runtime.
 
-#### Current Display Integration
-- **Display shows**: AV1-AV4, BV1-BV4 (limited screen space)
-- **Not displayed**: AI1-AI4, BI1-BI4, BO1-BO4
-- **Accessible via**: BACnet services (all objects fully functional)
+## Configurable Instance Arrays
 
-### Updating Values Programmatically
+The current code uses configurable BACnet instance arrays:
 
-To update object values from application code:
+- `USER_AV_INSTANCES[USER_AV_COUNT]`
+- `USER_BV_INSTANCES[USER_BV_COUNT]`
+- `USER_AI_INSTANCES[USER_AI_COUNT]`
+- `USER_BI_INSTANCES[USER_BI_COUNT]`
+- `USER_BO_INSTANCES[USER_BO_COUNT]`
 
-**Analog Values/Inputs**:
+These arrays define the actual BACnet instance numbers exposed on the network.
+
+That means:
+
+- the first configured AI role does not have to remain BACnet instance `1`
+- instance numbering can be changed without rewriting object-module logic
+- logical sensor mapping stays stable even if BACnet instance numbers are reassigned
+
+## Object Runtime Modules
+
+The current project object implementations are in `main/bacnet/objects/`:
+
+- `analog_value.c`
+- `binary_value.c`
+- `analog_input.c`
+- `binary_input.c`
+- `binary_output.c`
+
+These modules:
+
+- create project-specific BACnet objects
+- apply defaults from `main/User_Settings.c`
+- load saved state from NVS
+- save writable properties back to NVS
+
+## NVS Persistence
+
+Object persistence is part of the current design.
+
+The object modules store and restore data such as:
+
+- object names
+- object descriptions
+- present values
+- engineering units where supported
+- COV increments for analog objects
+
+Startup persistence policy is controlled by `main/app/app_storage.c` together with `USER_OVERRIDE_NVS_ON_FLASH` in `main/User_Settings.c`.
+
+- `0`: preserve existing NVS data
+- `1`: erase NVS on boot and restore compiled defaults
+
+## Current AI1-AI8 Sensor Mapping
+
+The sensor service in `main/app/sensor_service.c` uses logical roles backed by `USER_AI_INSTANCES[]`.
+
+Default logical mapping:
+
+| Logical slot | Default meaning |
+|--------------|-----------------|
+| AI1 | SEN54 temperature |
+| AI2 | SEN54 relative humidity |
+| AI3 | SEN54 VOC index |
+| AI4 | SEN54 PM1.0 |
+| AI5 | SEN54 PM2.5 |
+| AI6 | SEN54 PM4.0 |
+| AI7 | SEN54 PM10 |
+| AI8 | DS18B20 temperature |
+
+The sensor service also uses the first Binary Value role as a control point:
+
+| Logical slot | Default meaning |
+|--------------|-----------------|
+| BV1 | SEN54 full reset command |
+
+The important distinction is:
+
+- logical role order is fixed by the firmware
+- BACnet instance numbers are supplied by the configurable instance arrays
+
+## Where to Change Things
+
+### Change object counts
+
+Edit `main/User_Settings.h`.
+
+Counts must remain consistent with the arrays and with any logic that assumes a minimum number of objects. For example, the sensor service requires at least eight Analog Inputs and one Binary Value for the SEN54 reset command.
+
+### Change BACnet instance numbers
+
+Edit the `USER_*_INSTANCES[]` arrays in `main/User_Settings.c`.
+
+### Change default names, descriptions, units, values, or COV increments
+
+Edit the corresponding `USER_*` arrays in `main/User_Settings.c`.
+
+### Change sensor-to-object mapping semantics
+
+Edit `main/app/sensor_service.c` if you need to change which logical AI role receives each sensor measurement.
+
+## Programmatic Updates
+
+Typical runtime updates use the BACnet object APIs, for example:
+
 ```c
-Analog_Value_Present_Value_Set(1, 25.5f);      // AV1 = 25.5
-Analog_Input_Present_Value_Set(1, 22.3f);      // AI1 = 22.3
+Analog_Value_Present_Value_Set(instance, value);
+Analog_Input_Present_Value_Set(instance, value);
+Binary_Value_Present_Value_Set(instance, BINARY_ACTIVE);
+Binary_Input_Present_Value_Set(instance, BINARY_INACTIVE);
+Binary_Output_Present_Value_Set(instance, BINARY_ACTIVE);
 ```
 
-**Binary Values/Inputs/Outputs**:
-```c
-Binary_Value_Present_Value_Set(1, BINARY_ACTIVE);       // BV1 = ACTIVE
-Binary_Input_Present_Value_Set(1, BINARY_INACTIVE);     // BI1 = INACTIVE
-Binary_Output_Present_Value_Set(1, BINARY_ACTIVE);      // BO1 = ACTIVE
-```
+In the current application, `main/app/sensor_service.c` updates sensor-backed AIs using the configured instance numbers returned from `USER_AI_INSTANCES[]`.
 
-### Examples
+## Related Files
 
-#### Example 1: Map PMS5003 Sensor Data to Multiple AV Objects
-Modify `pms5003_task()` in `main.c`:
-```c
-// Currently writes only PM2.5 to AV1
-// Add these lines to write all measurements:
-Analog_Value_Present_Value_Set(1, (float)sensor_data.pm2_5_atm);     // PM2.5
-Analog_Value_Present_Value_Set(2, (float)sensor_data.pm1_0_atm);     // PM1.0
-Analog_Value_Present_Value_Set(3, (float)sensor_data.pm10_atm);      // PM10
-```
-
-#### Example 2: Create GPIO Read Task for BI Objects
-```c
-static void gpio_read_task(void *pvParameters)
-{
-    while (1) {
-        uint32_t gpio_state = gpio_get_level(GPIO_NUM_XX);
-        Binary_Input_Present_Value_Set(1, 
-            gpio_state ? BINARY_ACTIVE : BINARY_INACTIVE);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-```
-
-#### Example 3: Create GPIO Control Task for BO Objects
-```c
-static void gpio_control_task(void *pvParameters)
-{
-    while (1) {
-        BACNET_BINARY_PV state = Binary_Output_Present_Value(1);
-        gpio_set_level(GPIO_NUM_XX, state == BINARY_ACTIVE ? 1 : 0);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-```
-
-### Memory Status
-
-- **Flash Used**: 936 KB (44.9% of 2 MB available)
-- **Flash Remaining**: 941 KB (safe margin for future features)
-- **SRAM Headroom**: 200+ KB available
-- **NVS Usage**: ~6-8 KB of 64 KB partition
-
-All additions fit comfortably within available resources.
-
-### Testing with BACnet Tools
-
-Using YABE (Yet Another BACnet Explorer):
-
-1. **Discover device**: Device-31416 (ESP32-BACnet)
-2. **List objects**: Should see all 20 objects (AV1-4, BV1-4, AI1-4, BI1-4, BO1-4)
-3. **Test read**: All objects should return current values
-4. **Test write**: AV, BV, and BO objects should accept writes
-5. **Test COV**: Subscribe to any object and change its value
-
-### Troubleshooting
-
-**Objects not appearing in BACnet tool:**
-- Check ESP32 serial output for creation messages
-- Verify WiFi connection is stable
-- Ensure BBMD is reachable (10.113.33.1:47808)
-
-**Values not persisting after reboot:**
-- Verify NVS partition is available (check serial output on startup)
-- Check that `override_nvs_on_flash` is 0 in main.c
-- Ensure BACnet Write Property successfully changed the value
-
-**COV notifications not received:**
-- Verify subscription was accepted (YABE shows "Active" subscriptions)
-- Check that value changes exceed the COV increment
-- Monitor serial output for COV transmission messages
+- `main/main.c`
+- `main/User_Settings.h`
+- `main/User_Settings.c`
+- `main/app/app_storage.c`
+- `main/app/sensor_service.c`
+- `main/bacnet/bacnet_app.c`
+- `main/bacnet/objects/analog_value.c`
+- `main/bacnet/objects/binary_value.c`
+- `main/bacnet/objects/analog_input.c`
+- `main/bacnet/objects/binary_input.c`
+- `main/bacnet/objects/binary_output.c`
 

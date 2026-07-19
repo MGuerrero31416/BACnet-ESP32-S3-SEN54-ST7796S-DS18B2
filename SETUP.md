@@ -1,111 +1,162 @@
-# ESP32 BACnet Project - Setup Guide
+# Setup Guide
 
-This guide explains how to set up this project on a new computer.
+This project is currently documented for the active build and source layout in this repository.
 
-## Prerequisites
+## Required Environment
 
-### 1. Install ESP-IDF
-The project requires ESP-IDF v5.5.1. Install it using one of these methods:
+Use only the following toolchain combination:
 
-**Option A: Official Installer (Recommended)**
-- Download from: https://github.com/espressif/esp-idf/releases
-- Follow: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/windows-setup.html
+- ESP-IDF `5.5.4`
+- `IDF_PATH = C:\esp\v5.5.4\esp-idf`
+- target `esp32s3`
+- Arduino-ESP32 `3.3.10`
 
-**Option B: Manual Installation**
-```bash
-git clone --recursive https://github.com/espressif/esp-idf.git
-cd esp-idf
-git checkout v5.5.1
-./install.bat
-./export.bat
+The repository includes a build wrapper that checks the environment before building.
+
+## Project Preparation
+
+1. Clone or copy the repository.
+2. Open the repository root in VS Code.
+3. Ensure your ESP-IDF environment is the required `5.5.4` installation.
+4. Create the private Wi-Fi header:
+   - Copy `main/User_Private_Settings.example.h`
+   - Save it as `main/User_Private_Settings.h`
+5. Fill in `USER_WIFI_SSID` and `USER_WIFI_PASS` in `main/User_Private_Settings.h`.
+6. Review tracked defaults in `main/User_Settings.c`.
+
+## What to Configure
+
+### Private Wi-Fi Settings
+
+Private Wi-Fi credentials are intentionally separated from tracked source.
+
+- Template: `main/User_Private_Settings.example.h`
+- Private file: `main/User_Private_Settings.h`
+
+Only the private header should contain the real SSID and password.
+
+### BACnet and Device Defaults
+
+Adjust `main/User_Settings.c` and `main/User_Settings.h` for:
+
+- BACnet/IP enable flag
+- BACnet MS/TP enable flag
+- device name and device instance
+- BBMD foreign device registration settings
+- static IP behavior
+- object counts
+- object instance arrays
+- default object names, descriptions, units, values, and COV increments
+
+### Current Code Layout
+
+The current code is split across:
+
+- `main/main.c`
+- `main/app/`
+- `main/bacnet/`
+- `main/platform/`
+- `main/ui/`
+
+## Build
+
+Build only with the repository script:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build_idf55.ps1 build
 ```
 
-### 2. Install Git
-Required for component management
-- Download: https://git-scm.com/download/win
+Do not use direct `idf.py`, CMake, or Ninja commands for the documented build flow in this repository.
 
-### 3. Install Python 3.11+
-The ESP-IDF environment uses Python
-- Download: https://www.python.org/downloads/
-- Ensure "Add Python to PATH" is checked during installation
+## Display Stack
 
-## Building the Project
+The active display stack uses `TFT_eSPI`.
 
-### Using VS Code (Easiest)
+- UI implementation: `main/ui/display.cpp`
+- TFT configuration: `components/TFT_eSPI/User_Setup.h`
 
-1. **Open the project folder** in VS Code
-2. **Install ESP-IDF Extension** if not already installed
-   - Search for "Espressif IDF" in Extensions
-3. **Open Command Palette** (`Ctrl+Shift+P`)
-4. **Run**: `ESP-IDF: Configure ESP-IDF extension`
-   - Let it auto-detect your ESP-IDF installation
-5. **Run**: `ESP-IDF: Build` to compile
+Current ST7796S SPI pin mapping:
 
-### Using Command Line
+- MOSI: GPIO10
+- SCLK: GPIO9
+- CS: GPIO13
+- DC: GPIO12
+- RST: GPIO11
+- Backlight: GPIO14
 
-```bash
-# Initialize ESP-IDF environment
-C:\path\to\esp-idf\export.bat
+## Sensor and Object Layout
 
-# Build the project
-cd C:\path\to\BACnet-ESP32-S3
-idf.py build
+This firmware exposes 36 BACnet objects:
 
-# Flash to device
-idf.py -p COM8 flash
+- 16 AV
+- 4 BV
+- 8 AI
+- 4 BI
+- 4 BO
 
-# Monitor output
-idf.py -p COM8 monitor
+Default sensor mapping for the configured Analog Inputs is:
+
+- `AI1`: SEN54 temperature
+- `AI2`: SEN54 relative humidity
+- `AI3`: SEN54 VOC index
+- `AI4`: SEN54 PM1.0
+- `AI5`: SEN54 PM2.5
+- `AI6`: SEN54 PM4.0
+- `AI7`: SEN54 PM10
+- `AI8`: DS18B20 temperature
+
+The sensor acquisition logic lives in `main/app/sensor_service.c`.
+
+## NVS Persistence
+
+NVS is initialized by `main/app/app_storage.c`.
+
+BACnet object modules under `main/bacnet/objects/` load and save persisted object data. Existing NVS data is normally preserved across boots.
+
+To force compiled defaults to overwrite persisted state on the next boot, set:
+
+```c
+USER_OVERRIDE_NVS_ON_FLASH = 1;
 ```
 
-## Project Structure
+in `main/User_Settings.c`, then rebuild and reboot once. Return it to `0` for normal persistence afterward.
 
-- **`main/`** - Main application code
-- **`components/bacnet-stack/`** - Local BACnet stack library (DO NOT remove)
-- **`build/`** - Compiled output (auto-generated, ignored by git)
-- **`sdkconfig`** - Project configuration (auto-generated, not committed)
+## Main Runtime Flow
 
-## Important Notes
+The current startup sequence in `main/main.c` is:
 
-### Why `.vscode/settings.json` is not committed
-
-The `.vscode/settings.json` file contains computer-specific paths and is excluded from git. The VS Code ESP-IDF extension automatically detects your ESP-IDF installation on first use. If you need custom settings:
-
-1. Copy the checked-in `.vscode/settings.json.example` (if it exists)
-2. Or manually configure in VS Code:
-   - Open Settings (`Ctrl+,`)
-   - Search for "idf.espIdfPath"
-   - Let the extension auto-detect
-
-### Component Management
-
-The local BACnet stack component in `components/bacnet-stack/` is crucial. The `idf_component.yml` is configured to use only this local version to avoid dependency conflicts.
+1. initialize NVS and persistence policy
+2. initialize BACnet runtime
+3. initialize the display
+4. start BACnet tasks
+5. start the sensor service
+6. enter the application supervisor loop
 
 ## Troubleshooting
 
-### Build fails with "cmake not found"
-- Ensure ESP-IDF export script was run: `esp-idf\export.bat`
+### Build script rejects the environment
 
-### Python dependency errors
-- Run: `esp-idf\install.bat all`
+Verify that the active shell is using ESP-IDF `5.5.4` from `C:\esp\v5.5.4\esp-idf`.
 
-### Component linking issues
-- Ensure you have the **local** `components/bacnet-stack/` folder
-- Do NOT delete this folder or rely only on GitHub version
+### Wi-Fi does not connect
 
-### Can't connect to ESP32
-- Check port in `.vscode/settings.json` (or auto-detect)
-- Verify USB-to-Serial driver is installed
-- Use: `idf.py -p COM8 flash` (replace COM8 with your port)
+Check:
 
-## Porting to Another Computer
+- `main/User_Private_Settings.h` for SSID and password
+- `USER_WIFI_USE_STATIC_IP` and the static IP fields in `main/User_Settings.c`
+- `main/platform/wifi_helper.c` for station startup behavior
 
-When moving this project to another computer:
+### Display does not behave as expected
 
-1. **Copy the entire folder** (including hidden `.vscode` and `.git` folders)
-2. **Run**: `idf.py fullclean` to remove build artifacts
-3. **Delete** `sdkconfig` and `build/` directory if present
-4. **Open in VS Code** and let the ESP-IDF extension configure paths automatically
-5. **Build**: `idf.py build`
+Check:
 
-No manual path configuration should be needed!
+- `main/ui/display.cpp`
+- `components/TFT_eSPI/User_Setup.h`
+
+### BACnet objects do not match expectations
+
+Check:
+
+- counts in `main/User_Settings.h`
+- instance arrays and defaults in `main/User_Settings.c`
+- runtime object modules in `main/bacnet/objects/`
