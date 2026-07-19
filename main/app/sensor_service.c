@@ -1,5 +1,6 @@
 #include "sensor_service.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -16,6 +17,7 @@
 
 /* BACnet-stack headers */
 #include "bacnet/bacenum.h"
+#include "bacnet/basic/object/av.h"
 #include "bacnet/basic/object/ai.h"
 #include "bacnet/basic/object/bv.h"
 
@@ -132,7 +134,7 @@ static void sensor_service_task(void *parameter)
 {
     (void)parameter;
 
-    float ds18b20_temperature = 0.0f;
+    float raw_ds18b20_temperature = 0.0f;
     sen54_data_t sensor_data;
 
     const uint32_t sen54_reset_bv =
@@ -142,6 +144,10 @@ static void sensor_service_task(void *parameter)
     const uint32_t ds18b20_ai =
         sensor_ai_instance(
             SENSOR_AI_DS18B20_TEMPERATURE);
+
+    const uint32_t ds18b20_offset_av =
+        user_av_instance(
+            USER_AV_DS18B20_TEMP_OFFSET);
 
     ESP_LOGI(TAG, "Sensor service task started");
     sen54_bacnet_config_register_callback();
@@ -267,10 +273,19 @@ static void sensor_service_task(void *parameter)
          * Read the DS18B20 and update its configured BACnet AI.
          */
         if (ds18b20_read_temperature(
-                &ds18b20_temperature)) {
+                &raw_ds18b20_temperature)) {
+            float ds18b20_offset =
+                Analog_Value_Present_Value(ds18b20_offset_av);
+            if (!isfinite(ds18b20_offset)) {
+                ds18b20_offset = 0.0f;
+            }
+
+            float corrected_ds_temperature =
+                raw_ds18b20_temperature + ds18b20_offset;
+
             Analog_Input_Present_Value_Set(
                 ds18b20_ai,
-                ds18b20_temperature);
+                corrected_ds_temperature);
 
             Analog_Input_Reliability_Set(
                 ds18b20_ai,
@@ -278,8 +293,10 @@ static void sensor_service_task(void *parameter)
 
             ESP_LOGD(
                 TAG,
-                "DS18B20: T=%.2f C",
-                ds18b20_temperature);
+                "DS18B20: raw=%.2f C offset=%.2f C corrected=%.2f C",
+                raw_ds18b20_temperature,
+                ds18b20_offset,
+                corrected_ds_temperature);
         } else {
             Analog_Input_Reliability_Set(
                 ds18b20_ai,

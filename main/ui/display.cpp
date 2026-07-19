@@ -233,7 +233,7 @@ static void draw_aqi_panels(float pm25, float voc) // PM2.5     and VOC Index pa
     char num_buf[16];
 
     AqiInfo pm = pm25_aqi_info(pm25);
-    snprintf(num_buf, sizeof(num_buf), "%.1f", pm25);
+    snprintf(num_buf, sizeof(num_buf), "%.0f", pm25);
     draw_aqi_panel(AQI_LEFT_X,  AQI_PANEL_Y, AQI_LEFT_W,  AQI_PANEL_H,
                    "PM2.5 AQI", num_buf, "ug/m3", // AQI category string
                    pm.label, pm.bgColor, pm.fgColor, 2);
@@ -313,9 +313,9 @@ static void draw_sen54_temp_comp_overlay(float sen54_temperature)
     const float time_constant = Analog_Value_Present_Value(
         user_av_instance(USER_AV_SEN54_TEMP_COMP_TIME_CONSTANT));
 
-    snprintf(line[0], sizeof(line[0]), "Of %.1f", offset);
-    snprintf(line[1], sizeof(line[1]), "Sl %.1f", slope);
-    snprintf(line[2], sizeof(line[2]), "Tm %.1f", time_constant);
+    snprintf(line[0], sizeof(line[0]), "Off %.2f", offset);
+    snprintf(line[1], sizeof(line[1]), "Slp %.3f", slope);
+    snprintf(line[2], sizeof(line[2]), "Time %.0f", time_constant);
 
     AqiInfo ti = temp_info(sen54_temperature);
 

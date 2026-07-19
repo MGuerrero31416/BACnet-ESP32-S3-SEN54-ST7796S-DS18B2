@@ -42,6 +42,11 @@ static inline uint32_t sen54_av4_instance(void)
     return user_av_instance(USER_AV_SEN54_TEMP_COMP_TIME_CONSTANT);
 }
 
+static inline uint32_t ds18b20_av5_instance(void)
+{
+    return user_av_instance(USER_AV_DS18B20_TEMP_OFFSET);
+}
+
 static float raw_offset_to_c(int16_t raw)
 {
     return (float)raw / 200.0f;
@@ -112,6 +117,11 @@ static bool parse_av4_time_constant(float value, uint16_t *seconds)
 
     *seconds = (uint16_t)whole;
     return true;
+}
+
+static bool parse_av5_ds18b20_offset(float value)
+{
+    return isfinite(value);
 }
 
 static esp_err_t read_sensor_config(sen54_raw_config_t *config)
@@ -224,6 +234,24 @@ static bool sen54_av_write_request_callback(
     BACNET_ERROR_CLASS *error_class,
     BACNET_ERROR_CODE *error_code)
 {
+    if (object_instance == ds18b20_av5_instance()) {
+        if (!parse_av5_ds18b20_offset(requested_value)) {
+            if (error_class) {
+                *error_class = ERROR_CLASS_PROPERTY;
+            }
+            if (error_code) {
+                *error_code = ERROR_CODE_VALUE_OUT_OF_RANGE;
+            }
+            return false;
+        }
+
+        if (applied_value) {
+            *applied_value = requested_value;
+        }
+
+        return true;
+    }
+
     if (object_instance != sen54_av1_instance() &&
         object_instance != sen54_av2_instance() &&
         object_instance != sen54_av3_instance() &&
