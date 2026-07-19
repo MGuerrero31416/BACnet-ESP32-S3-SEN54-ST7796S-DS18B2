@@ -28,6 +28,8 @@
 
 extern void bacnet_nvs_save_ai_name(uint32_t instance, const char *name, uint16_t length);
 extern void bacnet_nvs_save_ai_desc(uint32_t instance, const char *desc, uint16_t length);
+extern void bacnet_nvs_save_ai_units(uint32_t instance, uint16_t units);
+extern void bacnet_nvs_save_ai_cov_increment(uint32_t instance,float cov_increment);
 
 /* Key List for storing the object data sorted by instance number  */
 static OS_Keylist Object_List;
@@ -1211,28 +1213,52 @@ bool Analog_Input_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
             break;
         case PROP_UNITS:
             status = write_property_type_valid(
-                wp_data, &value, BACNET_APPLICATION_TAG_ENUMERATED);
+                wp_data,
+                &value,
+                BACNET_APPLICATION_TAG_ENUMERATED);
+
             if (status) {
                 if (value.type.Enumerated <= UINT16_MAX) {
-                    pObject->Units = value.type.Enumerated;
+                    status = Analog_Input_Units_Set(
+                        wp_data->object_instance,
+                        (BACNET_ENGINEERING_UNITS)
+                            value.type.Enumerated);
+
+                    if (status) {
+                        bacnet_nvs_save_ai_units(
+                            wp_data->object_instance,
+                            (uint16_t)value.type.Enumerated);
+                    }
                 } else {
                     status = false;
-                    wp_data->error_class = ERROR_CLASS_PROPERTY;
-                    wp_data->error_code = ERROR_CODE_VALUE_OUT_OF_RANGE;
+                    wp_data->error_class =
+                        ERROR_CLASS_PROPERTY;
+                    wp_data->error_code =
+                        ERROR_CODE_VALUE_OUT_OF_RANGE;
                 }
             }
             break;
         case PROP_COV_INCREMENT:
             status = write_property_type_valid(
-                wp_data, &value, BACNET_APPLICATION_TAG_REAL);
+                wp_data,
+                &value,
+                BACNET_APPLICATION_TAG_REAL);
+
             if (status) {
                 if (value.type.Real >= 0.0f) {
                     Analog_Input_COV_Increment_Set(
-                        wp_data->object_instance, value.type.Real);
+                        wp_data->object_instance,
+                        value.type.Real);
+
+                    bacnet_nvs_save_ai_cov_increment(
+                        wp_data->object_instance,
+                        value.type.Real);
                 } else {
                     status = false;
-                    wp_data->error_class = ERROR_CLASS_PROPERTY;
-                    wp_data->error_code = ERROR_CODE_VALUE_OUT_OF_RANGE;
+                    wp_data->error_class =
+                        ERROR_CLASS_PROPERTY;
+                    wp_data->error_code =
+                        ERROR_CODE_VALUE_OUT_OF_RANGE;
                 }
             }
             break;

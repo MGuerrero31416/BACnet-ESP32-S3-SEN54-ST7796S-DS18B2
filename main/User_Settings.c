@@ -205,7 +205,7 @@ const float USER_AI_COV_INCREMENTS[USER_AI_COUNT] = {
     1.0f,
     1.0f,
     1.0f,
-    1.0f
+    0.1f
 };
 
 const uint32_t USER_BI_INSTANCES[USER_BI_COUNT] = { 1, 2, 3, 4 };
