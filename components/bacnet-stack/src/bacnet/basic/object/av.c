@@ -41,6 +41,9 @@ static const BACNET_OBJECT_TYPE Object_Type = OBJECT_ANALOG_VALUE;
 /* callback for present value writes */
 static analog_value_write_present_value_callback
     Analog_Value_Write_Present_Value_Callback;
+/* callback for request validation and applied-value resolution */
+static analog_value_write_present_value_request_callback
+    Analog_Value_Write_Present_Value_Request_Callback;
 
 /* clang-format off */
 /* These three arrays are used by the ReadPropertyMultiple handler */
@@ -1009,6 +1012,30 @@ bool Analog_Value_Write_Property(BACNET_WRITE_PROPERTY_DATA *wp_data)
                     wp_data->error_class = ERROR_CLASS_PROPERTY;
                     wp_data->error_code = ERROR_CODE_WRITE_ACCESS_DENIED;
                 } else {
+                    if (Analog_Value_Write_Present_Value_Request_Callback) {
+                        BACNET_ERROR_CLASS cb_error_class =
+                            ERROR_CLASS_PROPERTY;
+                        BACNET_ERROR_CODE cb_error_code =
+                            ERROR_CODE_VALUE_OUT_OF_RANGE;
+                        float cb_applied_value = write_value;
+
+                        status =
+                            Analog_Value_Write_Present_Value_Request_Callback(
+                                wp_data->object_instance,
+                                write_value,
+                                &cb_applied_value,
+                                &cb_error_class,
+                                &cb_error_code);
+
+                        if (!status) {
+                            wp_data->error_class = cb_error_class;
+                            wp_data->error_code = cb_error_code;
+                            break;
+                        }
+
+                        write_value = cb_applied_value;
+                    }
+
                     old_value =
                         Analog_Value_Present_Value(wp_data->object_instance);
                     if (Analog_Value_Present_Value_Set(
@@ -1215,6 +1242,12 @@ void Analog_Value_Write_Present_Value_Callback_Set(
     analog_value_write_present_value_callback cb)
 {
     Analog_Value_Write_Present_Value_Callback = cb;
+}
+
+void Analog_Value_Write_Present_Value_Request_Callback_Set(
+    analog_value_write_present_value_request_callback cb)
+{
+    Analog_Value_Write_Present_Value_Request_Callback = cb;
 }
 
 /**

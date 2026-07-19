@@ -37,10 +37,10 @@ const uint32_t USER_AV_INSTANCES[USER_AV_COUNT] = {
     9, 10, 11, 12, 13, 14, 15, 16
 };
 const char *USER_AV_NAMES[USER_AV_COUNT] = {
-    "AV1",
-    "AV2",
-    "AV3",
-    "AV4",
+    "SEN54 Fan Auto Clean Interval",
+    "SEN54 Temp Compensation Offset",
+    "SEN54 Temp Compensation Slope",
+    "SEN54 Temp Compensation Time Constant",
     "AV5",
     "AV6",
     "AV7",
@@ -55,10 +55,10 @@ const char *USER_AV_NAMES[USER_AV_COUNT] = {
     "AV16"
 };
 const char *USER_AV_DESCRIPTIONS[USER_AV_COUNT] = {
-    "Analog Value 1",
-    "Analog Value 2",
-    "Analog Value 3",
-    "Analog Value 4",
+    "SEN54 automatic fan cleaning interval (seconds, 0 disables)",
+    "SEN54 temperature compensation offset (deg C)",
+    "SEN54 normalized temperature compensation slope",
+    "SEN54 temperature compensation time constant (seconds)",
     "Analog Value 5",
     "Analog Value 6",
     "Analog Value 7",
@@ -73,10 +73,10 @@ const char *USER_AV_DESCRIPTIONS[USER_AV_COUNT] = {
     "Analog Value 16"
 };
 const uint16_t USER_AV_UNITS[USER_AV_COUNT] = {
+    UNITS_SECONDS,
+    UNITS_DEGREES_CELSIUS,
     UNITS_NO_UNITS,
-    UNITS_NO_UNITS,
-    UNITS_NO_UNITS,
-    UNITS_NO_UNITS,
+    UNITS_SECONDS,
     UNITS_NO_UNITS,
     UNITS_NO_UNITS,
     UNITS_NO_UNITS,
@@ -108,8 +108,8 @@ const float USER_AV_INITIAL_VALUES[USER_AV_COUNT] = {
 };
 const float USER_AV_COV_INCREMENTS[USER_AV_COUNT] = {
     1.0f,
-    1.0f,
-    1.0f,
+    0.005f,
+    0.0001f,
     1.0f,
     1.0f,
     1.0f,

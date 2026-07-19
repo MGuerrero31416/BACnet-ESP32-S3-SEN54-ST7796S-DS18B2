@@ -128,6 +128,43 @@ void bacnet_nvs_save_av_pv(uint32_t instance, float value) {
     }
 }
 
+esp_err_t bacnet_nvs_load_av_pv(
+    uint32_t instance,
+    float *value,
+    bool *found)
+{
+    if (value == NULL || found == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    *found = false;
+
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    char key[32];
+    snprintf(key, sizeof(key), "analog_%lu_val", (unsigned long)instance);
+
+    size_t len = sizeof(*value);
+    err = nvs_get_blob(nvs_handle, key, value, &len);
+
+    nvs_close(nvs_handle);
+
+    if (err == ESP_OK) {
+        *found = true;
+        return ESP_OK;
+    }
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+
+    return err;
+}
+
 void bacnet_nvs_load_av(uint32_t instance) {
     nvs_handle_t nvs_handle;
     char key[32];

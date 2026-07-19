@@ -65,6 +65,16 @@ typedef enum {
     USER_BV_SEN54_FULL_RESET = 0
 } user_bv_role_t;
 
+/*
+ * Logical positions in the USER_AV_* parallel arrays.
+ */
+typedef enum {
+    USER_AV_SEN54_FAN_AUTO_CLEAN_INTERVAL = 0,
+    USER_AV_SEN54_TEMP_COMP_OFFSET,
+    USER_AV_SEN54_TEMP_COMP_SLOPE,
+    USER_AV_SEN54_TEMP_COMP_TIME_CONSTANT
+} user_av_role_t;
+
 
 extern const uint32_t USER_AV_INSTANCES[USER_AV_COUNT];
 extern const char *USER_AV_NAMES[USER_AV_COUNT];
@@ -111,6 +121,12 @@ static inline uint32_t user_bv_instance(
     user_bv_role_t role)
 {
     return USER_BV_INSTANCES[(size_t)role];
+}
+
+static inline uint32_t user_av_instance(
+    user_av_role_t role)
+{
+    return USER_AV_INSTANCES[(size_t)role];
 }
 
 #endif /* USER_SETTINGS_H */

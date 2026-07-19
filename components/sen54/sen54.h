@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -77,6 +78,32 @@ void sen54_get_data(sen54_data_t *data);
  * @return ESP_OK on success, or an esp_err_t code on I2C failure.
  */
 esp_err_t sen54_full_reset(void);
+
+/* Official SEN5x configuration wrappers (thread-safe). */
+esp_err_t sen54_get_fan_auto_cleaning_interval_seconds(uint32_t *seconds);
+esp_err_t sen54_set_fan_auto_cleaning_interval_seconds(uint32_t seconds);
+esp_err_t sen54_get_temperature_offset_parameters_raw(
+    int16_t *raw_offset,
+    int16_t *raw_slope,
+    uint16_t *time_constant_seconds);
+esp_err_t sen54_set_temperature_offset_parameters_raw(
+    int16_t raw_offset,
+    int16_t raw_slope,
+    uint16_t time_constant_seconds);
+
+/* Shared I2C transaction guard used by SEN54 and Sensirion HAL. */
+esp_err_t sen54_i2c_transaction_begin(void);
+void sen54_i2c_transaction_end(void);
+
+/* I2C bridge consumed by Sensirion HAL. */
+esp_err_t sen54_i2c_bridge_write(
+    uint8_t address,
+    const uint8_t *data,
+    size_t length);
+esp_err_t sen54_i2c_bridge_read(
+    uint8_t address,
+    uint8_t *data,
+    size_t length);
 
 #ifdef __cplusplus
 }
