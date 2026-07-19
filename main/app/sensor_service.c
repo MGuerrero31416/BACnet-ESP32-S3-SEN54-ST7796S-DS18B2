@@ -11,6 +11,7 @@
 
 #include "User_Settings.h"
 #include "ds18b20.h"
+#include "sen54_bacnet_config.h"
 #include "sen54.h"
 
 /* BACnet-stack headers */
@@ -143,9 +144,14 @@ static void sensor_service_task(void *parameter)
             SENSOR_AI_DS18B20_TEMPERATURE);
 
     ESP_LOGI(TAG, "Sensor service task started");
+    sen54_bacnet_config_register_callback();
     ESP_LOGI(TAG, "Initializing SEN54");
 
     sen54_init();
+
+    if (sen54_bacnet_config_startup_sync() != ESP_OK) {
+        ESP_LOGW(TAG, "SEN54 BACnet startup sync failed");
+    }
 
     /*
      * Allow the SEN54 fan and measurement chamber to stabilize
@@ -173,6 +179,13 @@ static void sensor_service_task(void *parameter)
                 TAG,
                 "SEN54 full reset %s",
                 err == ESP_OK ? "OK" : "FAILED");
+
+            if (err == ESP_OK &&
+                sen54_bacnet_config_reapply_saved() != ESP_OK) {
+                ESP_LOGW(
+                    TAG,
+                    "SEN54 configuration reapply after reset failed");
+            }
 
             Binary_Value_Present_Value_Set(
                 sen54_reset_bv,

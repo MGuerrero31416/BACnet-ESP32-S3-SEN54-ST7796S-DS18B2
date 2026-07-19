@@ -4,6 +4,7 @@ idf_component_register(
 
         "app/app_storage.c"
         "app/app_supervisor.c"
+        "app/sen54_bacnet_config.c"
         "app/sensor_service.c"
         "app/stack_profiler.c"
 

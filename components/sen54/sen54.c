@@ -4,6 +4,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "sensirion/sen5x_i2c.h"
 #include <string.h>
 
 static const char *TAG = "SEN54";
@@ -32,6 +33,20 @@ static sen54_data_t current_data = {
     .humidity = -1.0f, .temperature = -1.0f, .voc_index = -1.0f, .nox_index = -1.0f
 };
 static SemaphoreHandle_t sen54_mutex = NULL;
+static SemaphoreHandle_t sen54_i2c_mutex = NULL;
+
+static esp_err_t sen54_ensure_i2c_mutex(void)
+{
+    if (sen54_i2c_mutex == NULL) {
+        sen54_i2c_mutex = xSemaphoreCreateMutex();
+        if (sen54_i2c_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create SEN54 I2C mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    return ESP_OK;
+}
 
 // ---------------------------------------------------------------------------
 // CRC-8 (polynomial 0x31, init 0xFF) used by all Sensirion sensors
@@ -54,14 +69,73 @@ static uint8_t sen54_crc8(const uint8_t *data, size_t len)
 static esp_err_t sen54_write_cmd(uint16_t cmd)
 {
     uint8_t buf[2] = { (uint8_t)(cmd >> 8), (uint8_t)(cmd & 0xFF) };
-    return i2c_master_write_to_device(SEN54_I2C_PORT, SEN54_I2C_ADDR,
-                                      buf, sizeof(buf), pdMS_TO_TICKS(100));
+    return sen54_i2c_bridge_write(
+        SEN54_I2C_ADDR,
+        buf,
+        sizeof(buf));
 }
 
 static esp_err_t sen54_read_bytes(uint8_t *buf, size_t len)
 {
-    return i2c_master_read_from_device(SEN54_I2C_PORT, SEN54_I2C_ADDR,
-                                       buf, len, pdMS_TO_TICKS(100));
+    return sen54_i2c_bridge_read(
+        SEN54_I2C_ADDR,
+        buf,
+        len);
+}
+
+esp_err_t sen54_i2c_bridge_write(
+    uint8_t address,
+    const uint8_t *data,
+    size_t length)
+{
+    if (data == NULL || length == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return i2c_master_write_to_device(
+        SEN54_I2C_PORT,
+        address,
+        data,
+        length,
+        pdMS_TO_TICKS(100));
+}
+
+esp_err_t sen54_i2c_bridge_read(
+    uint8_t address,
+    uint8_t *data,
+    size_t length)
+{
+    if (data == NULL || length == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return i2c_master_read_from_device(
+        SEN54_I2C_PORT,
+        address,
+        data,
+        length,
+        pdMS_TO_TICKS(100));
+}
+
+esp_err_t sen54_i2c_transaction_begin(void)
+{
+    esp_err_t err = sen54_ensure_i2c_mutex();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (xSemaphoreTake(sen54_i2c_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+void sen54_i2c_transaction_end(void)
+{
+    if (sen54_i2c_mutex != NULL) {
+        xSemaphoreGive(sen54_i2c_mutex);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +156,10 @@ static bool sen54_parse_word(const uint8_t *p, uint16_t *out)
 // ---------------------------------------------------------------------------
 void sen54_init(void)
 {
+    if (sen54_ensure_i2c_mutex() != ESP_OK) {
+        return;
+    }
+
     i2c_config_t cfg = {
         .mode             = I2C_MODE_MASTER,
         .sda_io_num       = SEN54_I2C_SDA_PIN,
@@ -115,7 +193,11 @@ void sen54_init(void)
     // Retry start measurement — cold power-up can take several seconds.
     err = ESP_FAIL;
     for (int attempt = 1; attempt <= 20; attempt++) {
-        err = sen54_write_cmd(SEN54_CMD_START_MEASUREMENT);
+        if (sen54_i2c_transaction_begin() == ESP_OK) {
+            err = sen54_write_cmd(SEN54_CMD_START_MEASUREMENT);
+            sen54_i2c_transaction_end();
+        }
+
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "SEN54 initialized (attempt %d), measurement started", attempt);
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -143,7 +225,11 @@ void sen54_init(void)
         /* After reset attempt, try a few more start attempts in case sensor needs
          * extra time to become responsive. */
         for (int attempt = 1; attempt <= 3; attempt++) {
-            esp_err_t err2 = sen54_write_cmd(SEN54_CMD_START_MEASUREMENT);
+            esp_err_t err2 = ESP_FAIL;
+            if (sen54_i2c_transaction_begin() == ESP_OK) {
+                err2 = sen54_write_cmd(SEN54_CMD_START_MEASUREMENT);
+                sen54_i2c_transaction_end();
+            }
             if (err2 == ESP_OK) {
                 ESP_LOGI(TAG, "SEN54 measurement started after recovery (attempt %d)", attempt);
                 err = ESP_OK;
@@ -161,6 +247,11 @@ bool sen54_read(sen54_data_t *data)
         return false;
     }
 
+    esp_err_t txn = sen54_i2c_transaction_begin();
+    if (txn != ESP_OK) {
+        return false;
+    }
+
     // Issue the Read Measured Values command
     esp_err_t err = sen54_write_cmd(SEN54_CMD_READ_VALUES);
     if (err != ESP_OK) {
@@ -170,6 +261,7 @@ bool sen54_read(sen54_data_t *data)
             err = sen54_write_cmd(SEN54_CMD_READ_VALUES);
         }
         if (err != ESP_OK) {
+            sen54_i2c_transaction_end();
             return false;
         }
     }
@@ -179,6 +271,7 @@ bool sen54_read(sen54_data_t *data)
 
     uint8_t buf[SEN54_READ_VALUES_LEN];
     err = sen54_read_bytes(buf, sizeof(buf));
+    sen54_i2c_transaction_end();
     if (err != ESP_OK) {
         return false;
     }
@@ -268,20 +361,126 @@ esp_err_t sen54_full_reset(void)
     // This clears all sensor state including VOC/NOx algorithm baselines.
     // The sensor needs ~1 s to complete its start-up sequence before it
     // will ACK further commands, after which measurement is restarted.
-    esp_err_t ret = sen54_write_cmd(SEN54_CMD_RESET);
+    esp_err_t ret = sen54_i2c_transaction_begin();
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    ret = sen54_write_cmd(SEN54_CMD_RESET);
+    sen54_i2c_transaction_end();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "SEN54 full reset command failed (%d)", ret);
         return ret;
     }
     ESP_LOGI(TAG, "SEN54 full reset (0xD304) sent");
     vTaskDelay(pdMS_TO_TICKS(1200));  /* datasheet: device ready after ~1 s */
+    ret = sen54_i2c_transaction_begin();
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
     ret = sen54_write_cmd(SEN54_CMD_START_MEASUREMENT);
+    sen54_i2c_transaction_end();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "SEN54 restart measurement after reset failed (%d)", ret);
     } else {
         ESP_LOGI(TAG, "SEN54 measurement restarted after full reset");
     }
     return ret;
+}
+
+esp_err_t sen54_get_fan_auto_cleaning_interval_seconds(uint32_t *seconds)
+{
+    if (seconds == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = sen54_i2c_transaction_begin();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    int16_t rc = sen5x_get_fan_auto_cleaning_interval(seconds);
+    sen54_i2c_transaction_end();
+
+    if (rc != 0) {
+        ESP_LOGW(TAG, "sen5x_get_fan_auto_cleaning_interval failed: %d", rc);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t sen54_set_fan_auto_cleaning_interval_seconds(uint32_t seconds)
+{
+    esp_err_t err = sen54_i2c_transaction_begin();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    int16_t rc = sen5x_set_fan_auto_cleaning_interval(seconds);
+    sen54_i2c_transaction_end();
+
+    if (rc != 0) {
+        ESP_LOGW(TAG, "sen5x_set_fan_auto_cleaning_interval failed: %d", rc);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t sen54_get_temperature_offset_parameters_raw(
+    int16_t *raw_offset,
+    int16_t *raw_slope,
+    uint16_t *time_constant_seconds)
+{
+    if (raw_offset == NULL ||
+        raw_slope == NULL ||
+        time_constant_seconds == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = sen54_i2c_transaction_begin();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    int16_t rc = sen5x_get_temperature_offset_parameters(
+        raw_offset,
+        raw_slope,
+        time_constant_seconds);
+    sen54_i2c_transaction_end();
+
+    if (rc != 0) {
+        ESP_LOGW(TAG, "sen5x_get_temperature_offset_parameters failed: %d", rc);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t sen54_set_temperature_offset_parameters_raw(
+    int16_t raw_offset,
+    int16_t raw_slope,
+    uint16_t time_constant_seconds)
+{
+    esp_err_t err = sen54_i2c_transaction_begin();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    int16_t rc = sen5x_set_temperature_offset_parameters(
+        raw_offset,
+        raw_slope,
+        time_constant_seconds);
+    sen54_i2c_transaction_end();
+
+    if (rc != 0) {
+        ESP_LOGW(TAG, "sen5x_set_temperature_offset_parameters failed: %d", rc);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
 void sen54_get_data(sen54_data_t *data)
