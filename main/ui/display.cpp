@@ -302,6 +302,40 @@ static void draw_ds18b20_temperature(
     tft.drawString(text, x, y);
 }
 
+static void draw_sen54_temp_comp_overlay(float sen54_temperature)
+{
+    char line[3][16];
+
+    const float offset = Analog_Value_Present_Value(
+        user_av_instance(USER_AV_SEN54_TEMP_COMP_OFFSET));
+    const float slope = Analog_Value_Present_Value(
+        user_av_instance(USER_AV_SEN54_TEMP_COMP_SLOPE));
+    const float time_constant = Analog_Value_Present_Value(
+        user_av_instance(USER_AV_SEN54_TEMP_COMP_TIME_CONSTANT));
+
+    snprintf(line[0], sizeof(line[0]), "Of %.1f", offset);
+    snprintf(line[1], sizeof(line[1]), "Sl %.1f", slope);
+    snprintf(line[2], sizeof(line[2]), "Tm %.1f", time_constant);
+
+    AqiInfo ti = temp_info(sen54_temperature);
+
+    const int16_t x = MID_LEFT_X + 7;
+    const int16_t line_gap = 9;
+    const int16_t y3 = MID_PANEL_Y + MID_PANEL_H - 12;
+    const int16_t y2 = y3 - line_gap;
+    const int16_t y1 = y2 - line_gap;
+
+    // Clear only the compact lower-left overlay box before redrawing.
+    tft.fillRect(MID_LEFT_X + 4, y1 - 1, 62, 30, ti.bgColor);
+
+    tft.setTextFont(1);
+    tft.setTextColor(ti.fgColor, ti.bgColor, true);
+    tft.setTextDatum(TL_DATUM);
+    tft.drawString(line[0], x, y1);
+    tft.drawString(line[1], x, y2);
+    tft.drawString(line[2], x, y3);
+}
+
 
 
 // ------------------------------------------------------------------
@@ -419,6 +453,7 @@ extern "C" void display_init(void) {
     draw_header();
     draw_link_indicators(true);
     draw_mid_panels(0.0f, 0.0f);
+    draw_sen54_temp_comp_overlay(0.0f);
     tft.drawFastHLine(DISP_X0, AQI_SEP_Y, DISP_WIDTH, TFT_CYAN);
     draw_aqi_panels(0.0f, 0.0f);
 
@@ -448,8 +483,9 @@ extern "C" void display_update_values(
     // draw_mid_panels / draw_aqi_panels delegate change-detection to
     // draw_aqi_panel, which returns immediately if nothing has changed.
     draw_mid_panels(temperature, humidity); // May clear and redraw yellow area
-                draw_ds18b20_temperature(  // Restores small DS18B20 overlay
-                temp_ds18b20,
-                temperature);
+    draw_sen54_temp_comp_overlay(temperature);
+    draw_ds18b20_temperature(  // Restores small DS18B20 overlay
+        temp_ds18b20,
+        temperature);
     draw_aqi_panels(pm25, voc);
 }
