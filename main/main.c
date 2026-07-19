@@ -68,9 +68,8 @@ void app_main(void)
         .core = &bacnet_core_task_handle,
         .cov = &bacnet_cov_task_handle,
     };
-    if (bacnet_app_start(&task_handles) != ESP_OK) {
-        ESP_LOGE(TAG, "BACnet task start reported an error");
-    }
+        ESP_ERROR_CHECK(
+            bacnet_app_start(&task_handles));
 
     ESP_ERROR_CHECK(sensor_service_start(&sen54_task_handle));
 
