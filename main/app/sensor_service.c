@@ -21,6 +21,9 @@
 #include "bacnet/basic/object/ai.h"
 #include "bacnet/basic/object/bv.h"
 
+#define SENSOR_ACQUISITION_INTERVAL_MS 10000U
+#define SEN54_RESET_RECOVERY_DELAY_MS  10000U
+
 static const char *TAG = "sensor_service";
 /*
  * DS18B20 moving-average filter.
@@ -242,7 +245,7 @@ static void sensor_service_task(void *parameter)
              * Give the sensor time to recover before the next
              * normal measurement.
              */
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(SEN54_RESET_RECOVERY_DELAY_MS)); // Wait before the next normal acquisition cycle.
             continue;
         }
 
@@ -363,7 +366,7 @@ static void sensor_service_task(void *parameter)
             ESP_LOGW(TAG, "DS18B20 read failed");
         }
 
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(SENSOR_ACQUISITION_INTERVAL_MS)); // Wait before the next normal acquisition cycle.
     }
 }
 
