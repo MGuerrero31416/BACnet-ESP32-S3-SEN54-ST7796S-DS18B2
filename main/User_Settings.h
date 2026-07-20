@@ -14,6 +14,13 @@ extern const char USER_WIFI_STATIC_IP_ADDR[];
 extern const char USER_WIFI_STATIC_IP_GATEWAY[];
 extern const char USER_WIFI_STATIC_IP_NETMASK[];
 
+/* Adafruit IO settings */
+extern const bool USER_ENABLE_ADAFRUIT_IO;
+extern const char USER_AIO_USERNAME[];
+extern const char USER_AIO_KEY[];
+extern const char USER_AIO_FEED_KEY[];
+extern const uint32_t USER_AIO_PUBLISH_INTERVAL_SECONDS; // Adafruit IO publishing interval in seconds. 
+
 /* BACnet device settings */
 extern const char USER_BACNET_DEVICE_NAME[];
 extern const uint32_t USER_BACNET_DEVICE_INSTANCE;

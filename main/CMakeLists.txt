@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
 
+        "app/adafruit_io_service.c"
         "app/app_storage.c"
         "app/app_supervisor.c"
         "app/sen54_bacnet_config.c"
@@ -25,7 +26,6 @@ idf_component_register(
 
         "User_Settings.c"
 
-
     INCLUDE_DIRS
         "."
         "app"
@@ -34,7 +34,7 @@ idf_component_register(
         "platform"
         "ui"
         "ui/fonts"
-        
+
     REQUIRES
         bacnet-stack
         TFT_eSPI
@@ -50,16 +50,22 @@ idf_component_register(
         esp_netif
         driver
         esp_timer
+        mqtt
+        mbedtls
 )
 
 # Add linker flags for Arduino log wrapper compatibility
-target_link_options(${COMPONENT_LIB} INTERFACE
-    "-Wl,--wrap=esp_log_write"
-    "-Wl,--wrap=esp_log_writev"
+target_link_options(
+    ${COMPONENT_LIB}
+    INTERFACE
+        "-Wl,--wrap=esp_log_write"
+        "-Wl,--wrap=esp_log_writev"
 )
 
 # Force the linker to include Arduino log wrapper symbols
-target_link_libraries(${COMPONENT_LIB} INTERFACE
-    "-Wl,--undefined=__wrap_esp_log_write"
-    "-Wl,--undefined=__wrap_esp_log_writev"
+target_link_libraries(
+    ${COMPONENT_LIB}
+    INTERFACE
+        "-Wl,--undefined=__wrap_esp_log_write"
+        "-Wl,--undefined=__wrap_esp_log_writev"
 )

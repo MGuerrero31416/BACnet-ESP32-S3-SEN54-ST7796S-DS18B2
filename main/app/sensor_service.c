@@ -22,7 +22,47 @@
 #include "bacnet/basic/object/bv.h"
 
 static const char *TAG = "sensor_service";
+/*
+ * DS18B20 moving-average filter.
+ *
+ * Four samples provide light smoothing without making the displayed
+ * temperature respond too slowly.
+ */
+#define DS18B20_AVERAGE_SAMPLE_COUNT 4U //for light filtering. Change it to 8U only if the value still appears too active;
 
+typedef struct {
+    float samples[DS18B20_AVERAGE_SAMPLE_COUNT];
+    float sum;
+    size_t next_sample;
+    size_t sample_count;
+} ds18b20_average_filter_t;
+
+/*
+ * Add one valid DS18B20 measurement to the rolling average.
+ *
+ * During startup, the average uses only the samples collected so far,
+ * so AI8 can be updated immediately without waiting for the buffer
+ * to become completely full.
+ */
+static float ds18b20_average_update(
+    ds18b20_average_filter_t *filter,
+    float new_sample)
+{
+    if (filter->sample_count < DS18B20_AVERAGE_SAMPLE_COUNT) {
+        filter->samples[filter->next_sample] = new_sample;
+        filter->sum += new_sample;
+        filter->sample_count++;
+    } else {
+        filter->sum -= filter->samples[filter->next_sample];
+        filter->samples[filter->next_sample] = new_sample;
+        filter->sum += new_sample;
+    }
+
+    filter->next_sample =
+        (filter->next_sample + 1U) % DS18B20_AVERAGE_SAMPLE_COUNT;
+
+    return filter->sum / (float)filter->sample_count;
+}
 
 /*
  * Logical positions in USER_AI_INSTANCES[].
@@ -135,6 +175,7 @@ static void sensor_service_task(void *parameter)
     (void)parameter;
 
     float raw_ds18b20_temperature = 0.0f;
+    ds18b20_average_filter_t ds18b20_filter = { 0 };
     sen54_data_t sensor_data;
 
     const uint32_t sen54_reset_bv =
@@ -270,18 +311,29 @@ static void sensor_service_task(void *parameter)
         }
 
         /*
-         * Read the DS18B20 and update its configured BACnet AI.
-         */
+        * Read the DS18B20, smooth the raw measurement, apply the
+        * user-configurable calibration offset, and update BACnet AI8.
+        */
         if (ds18b20_read_temperature(
                 &raw_ds18b20_temperature)) {
+            float filtered_ds18b20_temperature =
+                ds18b20_average_update(
+                    &ds18b20_filter,
+                    raw_ds18b20_temperature);
+
             float ds18b20_offset =
                 Analog_Value_Present_Value(ds18b20_offset_av);
+
             if (!isfinite(ds18b20_offset)) {
                 ds18b20_offset = 0.0f;
             }
 
+            /*
+            * Apply the offset after averaging so that BACnet changes to the
+            * offset take effect immediately instead of being slowly averaged.
+            */
             float corrected_ds_temperature =
-                raw_ds18b20_temperature + ds18b20_offset;
+                filtered_ds18b20_temperature + ds18b20_offset;
 
             Analog_Input_Present_Value_Set(
                 ds18b20_ai,
@@ -293,11 +345,17 @@ static void sensor_service_task(void *parameter)
 
             ESP_LOGD(
                 TAG,
-                "DS18B20: raw=%.2f C offset=%.2f C corrected=%.2f C",
+                "DS18B20: raw=%.3f C average=%.3f C "
+                "offset=%.2f C corrected=%.3f C",
                 raw_ds18b20_temperature,
+                filtered_ds18b20_temperature,
                 ds18b20_offset,
                 corrected_ds_temperature);
         } else {
+            /*
+            * Do not add a failed reading to the moving average.
+            * Retain the last valid AI value and mark it unreliable.
+            */
             Analog_Input_Reliability_Set(
                 ds18b20_ai,
                 RELIABILITY_UNRELIABLE_OTHER);

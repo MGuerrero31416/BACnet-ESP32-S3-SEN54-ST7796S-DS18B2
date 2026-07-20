@@ -1,9 +1,11 @@
 #include "User_Settings.h"
 #include "bacnet/bacenum.h"
 
-/* WiFi settings */
-/* Private WiFi credentials are provided in User_Private_Settings.h */
+/* Private WiFi and Adafruit IO credentials are provided in User_Private_Settings.h */
 #include "User_Private_Settings.h"
+const bool USER_ENABLE_ADAFRUIT_IO = false; //  Enable Adafruit IO MQTT publishing service
+const char USER_AIO_FEED_KEY[] = "sen54-01"; // Adafruit IO feed key for publishing SEN54 sensor data. This must exactly match the Feed Key shown in Adafruit IO
+
 
 const bool USER_ENABLE_BACNET_IP = true;
 const bool USER_WIFI_USE_STATIC_IP = false;
