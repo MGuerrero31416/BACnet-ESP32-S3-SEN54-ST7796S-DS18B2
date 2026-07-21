@@ -1,30 +1,52 @@
+set(APP_SRCS
+    "main.c"
+
+    "app/adafruit_io_service.c"
+
+    "app/app_storage.c"
+    "app/app_supervisor.c"
+    "app/sen54_bacnet_config.c"
+    "app/sensor_service.c"
+    "app/stack_profiler.c"
+
+    "bacnet/bacnet_app.c"
+    "bacnet/bacnet_coordinator.c"
+    "bacnet/bacnet_event_bus.c"
+
+    "bacnet/objects/analog_input.c"
+    "bacnet/objects/analog_value.c"
+    "bacnet/objects/binary_input.c"
+    "bacnet/objects/binary_output.c"
+    "bacnet/objects/binary_value.c"
+
+    "platform/mstp_rs485.c"
+    "platform/wifi_helper.c"
+
+    "User_Settings.c"
+)
+
+if(CONFIG_USER_DISPLAY_ST7796S_CURRENT)
+    list(APPEND APP_SRCS
+        "ui/profiles/display_st7796s_current.cpp"
+    )
+
+elseif(CONFIG_USER_DISPLAY_ST7796S_TEST)
+    list(APPEND APP_SRCS
+        "ui/profiles/display_st7796s_test.cpp"
+    )
+
+elseif(CONFIG_USER_DISPLAY_NONE)
+    list(APPEND APP_SRCS
+        "ui/profiles/display_none.c"
+    )
+
+elseif(NOT CMAKE_BUILD_EARLY_EXPANSION)
+    message(FATAL_ERROR "No display profile selected")
+endif()
+
 idf_component_register(
     SRCS
-        "main.c"
-
-        "app/adafruit_io_service.c"
-        "app/app_storage.c"
-        "app/app_supervisor.c"
-        "app/sen54_bacnet_config.c"
-        "app/sensor_service.c"
-        "app/stack_profiler.c"
-
-        "bacnet/bacnet_app.c"
-        "bacnet/bacnet_coordinator.c"
-        "bacnet/bacnet_event_bus.c"
-
-        "bacnet/objects/analog_input.c"
-        "bacnet/objects/analog_value.c"
-        "bacnet/objects/binary_input.c"
-        "bacnet/objects/binary_output.c"
-        "bacnet/objects/binary_value.c"
-
-        "platform/mstp_rs485.c"
-        "platform/wifi_helper.c"
-
-        "ui/display.cpp"
-
-        "User_Settings.c"
+        ${APP_SRCS}
 
     INCLUDE_DIRS
         "."

@@ -50,6 +50,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initializing display");
     display_init();
+  
 
     /* Remaining task startup and supervisor loop */
 

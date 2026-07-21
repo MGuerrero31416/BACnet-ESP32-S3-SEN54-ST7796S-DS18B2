@@ -8,7 +8,7 @@ const char USER_AIO_FEED_KEY[] = "sen54-01"; // Adafruit IO feed key for publish
 
 
 const bool USER_ENABLE_BACNET_IP = true;
-const bool USER_WIFI_USE_STATIC_IP = false;
+const bool USER_WIFI_USE_STATIC_IP = true;
 const char USER_WIFI_STATIC_IP_ADDR[] = "10.120.245.97";
 const char USER_WIFI_STATIC_IP_GATEWAY[] = "10.120.245.254";
 const char USER_WIFI_STATIC_IP_NETMASK[] = "255.255.255.0";

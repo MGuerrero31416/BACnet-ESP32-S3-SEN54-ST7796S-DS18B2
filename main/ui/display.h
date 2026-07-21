@@ -1,11 +1,12 @@
 #ifndef DISPLAY_H
 #define DISPLAY_H
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Initialize the TFT display (TFT_eSPI, ST7796S) */
+/* Initialize the display */
 void display_init(void);
 
 /* Update display with BACnet object values */

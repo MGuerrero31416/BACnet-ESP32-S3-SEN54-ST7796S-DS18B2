@@ -241,7 +241,7 @@ static void draw_aqi_panels(float pm25, float voc) // PM2.5     and VOC Index pa
     AqiInfo vo = voc_aqi_info(voc);
     snprintf(num_buf, sizeof(num_buf), "%.0f", voc);
     draw_aqi_panel(AQI_RIGHT_X, AQI_PANEL_Y, AQI_RIGHT_W, AQI_PANEL_H,
-                   "VOC Index", num_buf, "(1 - 500)", // AQI category string
+                   "VOC Index -TEST DISPLAY", num_buf, "(1 - 500)", // AQI category string
                    vo.label, vo.bgColor, vo.fgColor, 3);
 }
 
@@ -424,6 +424,8 @@ extern "C" void display_init(void) {
     printf("[DISP] initArduino...\n");
     initArduino();
 
+    printf("[DISP] Profile: ST7796S_TEST\n");
+
     printf("[DISP] backlight on...\n");
     // TFT_eSPI drives the backlight via TFT_BL / TFT_BACKLIGHT_ON in User_Setup.h;
     // assert it explicitly here as well.
@@ -435,6 +437,29 @@ extern "C" void display_init(void) {
     tft.init();
     printf("[DISP] tft.init() done, setRotation...\n");
     tft.setRotation(1);
+
+    // print both the UI profile and hardware setup during startup
+        ESP_LOGI(TAG, "UI profile: ST7796S TEST");
+        ESP_LOGI(TAG, "TFT hardware: %s", USER_SETUP_INFO);
+        ESP_LOGI(
+            TAG,
+            "TFT GPIO: MOSI=%d SCLK=%d MISO=%d CS=%d DC=%d RST=%d BL=%d",
+            TFT_MOSI,
+            TFT_SCLK,
+            TFT_MISO,
+            TFT_CS,
+            TFT_DC,
+            TFT_RST,
+            TFT_BL);
+        ESP_LOGI(
+            TAG,
+            "TFT native size: %dx%d; runtime size: %dx%d",
+            TFT_WIDTH,
+            TFT_HEIGHT,
+            tft.width(),
+            tft.height());
+
+
 
     // Pre-compute font heights used by draw_aqi_panel for content layout.
     // Done once here so those values are available for every panel redraw
