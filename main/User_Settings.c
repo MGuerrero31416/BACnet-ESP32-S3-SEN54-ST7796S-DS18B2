@@ -3,15 +3,16 @@
 
 /* Private WiFi and Adafruit IO credentials are provided in User_Private_Settings.h */
 #include "User_Private_Settings.h"
-const bool USER_ENABLE_ADAFRUIT_IO = false; //  Enable Adafruit IO MQTT publishing service
+const bool USER_ENABLE_ADAFRUIT_IO = true; //  Enable Adafruit IO MQTT publishing service
 const char USER_AIO_FEED_KEY[] = "sen54-01"; // Adafruit IO feed key for publishing SEN54 sensor data. This must exactly match the Feed Key shown in Adafruit IO
 
 
 const bool USER_ENABLE_BACNET_IP = true;
-const bool USER_WIFI_USE_STATIC_IP = true;
+const bool USER_WIFI_USE_STATIC_IP = false;
 const char USER_WIFI_STATIC_IP_ADDR[] = "10.120.245.97";
 const char USER_WIFI_STATIC_IP_GATEWAY[] = "10.120.245.254";
 const char USER_WIFI_STATIC_IP_NETMASK[] = "255.255.255.0";
+const char USER_WIFI_STATIC_DNS[] = "8.8.8.8";
 
 /* BACnet device settings */
 const char USER_BACNET_DEVICE_NAME[] = "ESP32-S3_55502";

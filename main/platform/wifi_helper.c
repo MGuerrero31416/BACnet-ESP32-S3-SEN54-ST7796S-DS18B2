@@ -38,6 +38,18 @@ static void wifi_event_handler(void *arg,
             s_ip_logged = true;
         }
         esp_wifi_set_ps(WIFI_PS_NONE);   // disable modem sleep – prevents ping timeouts
+        /* Override DNS (applies to both DHCP and static IP modes) */
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (netif && USER_WIFI_STATIC_DNS[0] != '\0') {
+            ip4_addr_t ip4 = {0};
+            esp_netif_dns_info_t dns_info = {0};
+            if (ip4addr_aton(USER_WIFI_STATIC_DNS, &ip4)) {
+                dns_info.ip.u_addr.ip4.addr = ip4.addr;
+                dns_info.ip.type = IPADDR_TYPE_V4;
+                esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns_info);
+                ESP_LOGI(TAG, "DNS set to %s", USER_WIFI_STATIC_DNS);
+            }
+        }
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         }

@@ -10,11 +10,10 @@
 #include "lwip/ip4_addr.h"
 #include <stdio.h>
 #include <string.h>
-
-// Backlight pin – same value as TFT_BL in User_Setup.h
-#define DISP_BL  14
+#include "esp_log.h"
 
 static TFT_eSPI tft;
+static const char *TAG = "display";
 
 // Rotation 3 produces 480x320 coordinate space on this panel.
 #define DISP_X0    0
@@ -429,9 +428,11 @@ extern "C" void display_init(void) {
     printf("[DISP] backlight on...\n");
     // TFT_eSPI drives the backlight via TFT_BL / TFT_BACKLIGHT_ON in User_Setup.h;
     // assert it explicitly here as well.
-    pinMode(DISP_BL, OUTPUT);
-    digitalWrite(DISP_BL, HIGH);
-    delay(10);
+        #if defined(TFT_BL) && (TFT_BL >= 0)
+            pinMode(TFT_BL, OUTPUT);
+            digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
+            delay(10);
+        #endif
 
     printf("[DISP] tft.init()...\n");
     tft.init();

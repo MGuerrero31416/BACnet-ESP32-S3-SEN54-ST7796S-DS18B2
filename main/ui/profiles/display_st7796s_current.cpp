@@ -10,11 +10,10 @@
 #include "lwip/ip4_addr.h"
 #include <stdio.h>
 #include <string.h>
-
-// Backlight pin – same value as TFT_BL in User_Setup.h
-#define DISP_BL  14
+#include "esp_log.h"
 
 static TFT_eSPI tft;
+static const char *TAG = "display";
 
 // Rotation 3 produces 480x320 coordinate space on this panel.
 #define DISP_X0    0
@@ -430,9 +429,11 @@ extern "C" void display_init(void) {
     printf("[DISP] backlight on...\n");
     // TFT_eSPI drives the backlight via TFT_BL / TFT_BACKLIGHT_ON in User_Setup.h;
     // assert it explicitly here as well.
-    pinMode(DISP_BL, OUTPUT);
-    digitalWrite(DISP_BL, HIGH);
-    delay(10);
+        #if defined(TFT_BL) && (TFT_BL >= 0)
+            pinMode(TFT_BL, OUTPUT);
+            digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
+            delay(10);
+        #endif
 
     printf("[DISP] tft.init()...\n");
     tft.init();
@@ -440,11 +441,11 @@ extern "C" void display_init(void) {
     tft.setRotation(1);
 
     // print both the UI profile and hardware setup during startup
-                ESP_LOGI(TAG, "UI profile: ST7796S CURRENT");
-            ESP_LOGI(TAG, "TFT hardware: %s", USER_SETUP_INFO);
-            ESP_LOGI(
-                TAG,
-                "TFT GPIO: MOSI=%d SCLK=%d MISO=%d CS=%d DC=%d RST=%d BL=%d",
+        ESP_LOGI(TAG, "UI profile: ST7796S CURRENT");
+        ESP_LOGI(TAG, "TFT hardware: %s", USER_SETUP_INFO);
+        ESP_LOGI(
+            TAG,
+            "TFT GPIO: MOSI=%d SCLK=%d MISO=%d CS=%d DC=%d RST=%d BL=%d",
                 TFT_MOSI,
                 TFT_SCLK,
                 TFT_MISO,
@@ -452,9 +453,9 @@ extern "C" void display_init(void) {
                 TFT_DC,
                 TFT_RST,
                 TFT_BL);
-            ESP_LOGI(
-                TAG,
-                "TFT native size: %dx%d; runtime size: %dx%d",
+        ESP_LOGI(
+            TAG,
+            "TFT native size: %dx%d; runtime size: %dx%d",
                 TFT_WIDTH,
                 TFT_HEIGHT,
                 tft.width(),

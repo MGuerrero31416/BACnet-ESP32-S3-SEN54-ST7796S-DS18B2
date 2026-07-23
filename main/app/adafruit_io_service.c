@@ -43,7 +43,7 @@ static const char *TAG = "adafruit_io";
 #define AIO_BROKER_URI "mqtts://io.adafruit.com:8883"
 
 
-#define AIO_PUBLISH_INTERVAL_MS 10000U
+#define AIO_PUBLISH_INTERVAL_MS 60000U
 #define AIO_SENSOR_STARTUP_DELAY_MS 8000U
 
 #define AIO_PUBLISH_TASK_STACK_SIZE 4096U

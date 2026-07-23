@@ -13,6 +13,7 @@ extern const bool USER_WIFI_USE_STATIC_IP;
 extern const char USER_WIFI_STATIC_IP_ADDR[];
 extern const char USER_WIFI_STATIC_IP_GATEWAY[];
 extern const char USER_WIFI_STATIC_IP_NETMASK[];
+extern const char USER_WIFI_STATIC_DNS[];
 
 /* Adafruit IO settings */
 extern const bool USER_ENABLE_ADAFRUIT_IO;
